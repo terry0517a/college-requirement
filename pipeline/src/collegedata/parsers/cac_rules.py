@@ -108,9 +108,19 @@ def _text(inner: str) -> str:
     return htmllib.unescape(re.sub(r"<[^>]+>", "", inner)).strip()
 
 
-def _lines(inner: str) -> list[str]:
+def _lines(inner: str, keep_blank: bool = False) -> list[str]:
+    """Split on <br>. keep_blank preserves blank lines (positional zips); trailing blanks are dropped."""
     parts = re.split(r"<br\s*/?>", inner, flags=re.I)
-    return [t for t in (re.sub(r"\s+", " ", _text(p)) for p in parts) if t]
+    out = [re.sub(r"\s+", " ", _text(p)) for p in parts]
+    if keep_blank:
+        while out and not out[-1]:
+            out.pop()
+        return out
+    return [t for t in out if t]
+
+
+def _multiline(inner: str) -> str:
+    return "\n".join(_lines(inner))
 
 
 def _compact(inner: str) -> str:
@@ -118,7 +128,7 @@ def _compact(inner: str) -> str:
 
 
 def _int(s: str | None) -> int | None:
-    m = re.search(r"\d+", s or "")
+    m = re.search(r"\d+", (s or "").replace(",", ""))
     return int(m.group()) if m else None
 
 
@@ -154,61 +164,77 @@ def parse_rules_page(html: str) -> RulesPage:
     def val(label: str) -> str | None:
         return _text(labeled[label]) if label in labeled else None
 
-    quota = _int(val("招生名額"))
-    if quota is None:
+    if "招生名額" not in labeled:
         raise ValueError("not a rules page")
+    raw_quota = _text(labeled["招生名額"]).replace(",", "")
+    if not raw_quota.isdigit():
+        raise ValueError(f"quota not numeric: {raw_quota!r}")
+    quota = int(raw_quota)
     gender = val("性別要求")
     if gender in (None, "", "無"):
         gender = None
 
     g3 = [(i, inner) for i, (cls, inner) in enumerate(p.cells) if "g3" in cls]
-    g3_lines = [_lines(inner) for _, inner in g3]
-    g3_lines += [[]] * (8 - len(g3_lines))
-    subjects, thr_lines, mul_lines, wts, pct_cell, names, item_thr, item_pct = g3_lines[:8]
+    if g3 and len(g3) != 8:
+        raise ValueError(f"unexpected g3 cell count: {len(g3)}")
 
     thresholds: dict[str, str | None] = {s: None for s in SUBJECTS}
     multipliers: dict[str, Decimal | None] = {s: None for s in SUBJECTS}
     gsat_weights: dict[str, Decimal] = {}
-    for k, subj in enumerate(subjects):
-        if subj not in thresholds:
-            continue
-        if k < len(thr_lines) and thr_lines[k] != "--":
-            thresholds[subj] = thr_lines[k]
-        if k < len(mul_lines):
-            multipliers[subj] = _dec(mul_lines[k])
-        if k < len(wts) and wts[k].startswith("*"):
-            w = _dec(wts[k])
-            if w is not None:
-                gsat_weights[subj] = w
-
-    items = [
-        Stage2Item(
-            name=n,
-            threshold=None if k >= len(item_thr) or item_thr[k] == "--" else item_thr[k],
-            pct=_int(item_pct[k]) if k < len(item_pct) else None,
-        )
-        for k, n in enumerate(names)
-    ]
-
+    items: list[Stage2Item] = []
     tiebreak: list[str] = []
-    if len(g3) >= 8 and g3[7][0] + 1 < len(p.cells):
-        tiebreak = [re.sub(rf"^[{_NUMERALS}]、\s*", "", ln) for ln in _lines(p.cells[g3[7][0] + 1][1])]
+    stage1_pct = None
+    if g3:
+        subjects, thr_lines, mul_lines, wts, pct_cell, names, item_thr, item_pct = (
+            _lines(inner, keep_blank=True) for _, inner in g3
+        )
+        if not (len(subjects) == len(thr_lines) == len(mul_lines) == len(wts)):
+            raise ValueError("misaligned first-stage cells")
+        for k, subj in enumerate(subjects):
+            if subj not in thresholds:
+                continue
+            if thr_lines[k] not in ("", "--"):
+                thresholds[subj] = thr_lines[k]
+            multipliers[subj] = _dec(mul_lines[k]) if mul_lines[k] not in ("", "--") else None
+            if wts[k].startswith("*"):
+                w = _dec(wts[k])
+                if w is not None:
+                    gsat_weights[subj] = w
+        stage1_pct = _int(" ".join(pct_cell))
+        if names:
+            if not (len(names) == len(item_thr) == len(item_pct)):
+                raise ValueError("misaligned second-stage cells")
+            items = [
+                Stage2Item(name=n, threshold=item_thr[k] if item_thr[k] not in ("", "--") else None,
+                           pct=_int(item_pct[k]))
+                for k, n in enumerate(names)
+            ]
+        if g3[7][0] + 1 < len(p.cells):
+            tiebreak = [re.sub(rf"^[{_NUMERALS}]、\s*", "", ln) for ln in _lines(p.cells[g3[7][0] + 1][1])]
 
     review = None
-    for _, inner in p.cells:
-        m = re.search(r"項目：(.*)", inner, re.S)
-        if m:
-            review = _text(m.group(1)).split("※")[0].strip() or None
+    for i, (cls, inner) in enumerate(p.cells[:-1]):
+        if "g3" not in cls and _compact(inner) == "審查資料":
+            m = re.search(r"項目：(.*)", p.cells[i + 1][1], re.S)
+            if m:
+                review = re.split(r"※|說明：", _text(m.group(1)))[0].strip() or None
             break
 
     exam = " ".join(_lines(labeled["指定項目甄試日期"])) if "指定項目甄試日期" in labeled else None
-    note = _text(labeled.get("備註", ""))
-    wm = re.search(r"https?://\S+", note)
+    website = None
+    for line in _lines(labeled.get("備註", "")):
+        wm = re.search(r"https?://\S+", line)
+        if wm:
+            website = wm.group().rstrip("。")
+            break
+    school, dept = _div_text(html, "colname"), _div_text(html, "gsdname")
+    if not school or not dept:
+        raise ValueError("not a rules page")
 
     return RulesPage(
         cac_code=_text(labeled["校系代碼"]),
-        school=_div_text(html, "colname"),
-        name=_div_text(html, "gsdname"),
+        school=school,
+        name=dept,
         quota=quota,
         gender=gender,
         expected_candidates=_int(val("預計甄試人數")),
@@ -216,11 +242,11 @@ def parse_rules_page(html: str) -> RulesPage:
         thresholds=thresholds,
         multipliers=multipliers,
         gsat_weights=gsat_weights,
-        stage1_pct=_int(" ".join(pct_cell)),
+        stage1_pct=stage1_pct,
         items=items,
         tiebreak_order=tiebreak,
         review_items=review,
         exam_date=exam or None,
-        website=wm.group().rstrip("。") if wm else None,
-        overflow_rule=val("同級分(分數)超額篩選方式") or None,
+        website=website,
+        overflow_rule=_multiline(labeled["同級分(分數)超額篩選方式"]) or None if "同級分(分數)超額篩選方式" in labeled else None,
     )
