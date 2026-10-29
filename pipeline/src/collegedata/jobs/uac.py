@@ -8,6 +8,7 @@ import httpx
 import yaml
 from psycopg.types.json import Jsonb
 
+from collegedata.jobs.cac_common import upsert_program
 from collegedata.parsers.uac import parse_uac_pdf
 from collegedata.sources import ensure_source
 
@@ -96,15 +97,7 @@ class UacJob:
                 raise UnknownSchoolError(missing)
             for r in rows:
                 inst_id = _institution_id(conn, cache, r.school_zh, school_map, source_id, url)
-                prog_id = conn.execute(
-                    """insert into program (institution_id, name_zh, name_en, source_id, source_url, fetched_at)
-                       values (%s, %s, NULL, %s, %s, now())
-                       on conflict (institution_id, name_zh) do update set
-                           source_id = excluded.source_id,
-                           source_url = excluded.source_url, fetched_at = excluded.fetched_at
-                       returning id""",
-                    (inst_id, r.program_zh, source_id, url),
-                ).fetchone()[0]
+                prog_id = upsert_program(conn, inst_id, r.program_zh, source_id, url)
                 subjects = [{"subject": s, "weight": w} for s, w in r.subjects]
                 conn.execute(
                     """insert into admission_stat (program_id, year, pathway, min_score, admitted_count,

@@ -67,6 +67,7 @@ def run_job(job: Job, conn) -> FetchResult:
 
 
 def _register_jobs() -> None:
+    from collegedata.jobs.cac_sieve import CacSieveJob
     from collegedata.jobs.hipo import HipoJob
 
     from collegedata.jobs.openalex import OpenAlexJob
@@ -77,6 +78,7 @@ def _register_jobs() -> None:
     REGISTRY["uac"] = lambda: UacJob()
     REGISTRY["openalex"] = lambda: OpenAlexJob()
     REGISTRY["scorecard"] = lambda: ScorecardJob()
+    REGISTRY["cac_sieve"] = lambda: CacSieveJob()
 
 
 _register_jobs()
