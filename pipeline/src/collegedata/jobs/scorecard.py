@@ -1,5 +1,7 @@
 """Weekly College Scorecard job: U.S. bachelor's-granting institutions with admissions data."""
+import dataclasses
 import datetime
+import logging
 import os
 import time
 
@@ -22,10 +24,51 @@ PATHWAY = "us_freshman"
 SYSTEM_CODE = "us_sat"
 ALL_PROGRAM_CODE = "all"
 ALL_PROGRAM_NAME = "All undergraduate programs"
+SCHOOL_PAGE_URL = "https://collegescorecard.ed.gov/school/?{id}"
+MIN_SCORE_COVERAGE = 0.3
+MIN_TUITION_COVERAGE = 0.5
+COVERAGE_CHECK_MIN_SCHOOLS = 100
+SAT_RANGE = (200, 800)
+ACT_RANGE = (1, 36)
+
+log = logging.getLogger(__name__)
 
 
 class ScorecardDataError(Exception):
     pass
+
+
+class ScorecardConfigError(Exception):
+    pass
+
+
+class ScorecardHttpError(Exception):
+    """Non-2xx response; the message carries the status and the URL without the API key."""
+
+
+def _in_range(r: tuple[int, int] | None, lo: int, hi: int) -> bool:
+    return r is None or all(lo <= v <= hi for v in r)
+
+
+def validate_school(school: School) -> School:
+    """Implausible values become None (spec 6.4) so they are never stored."""
+    years = []
+    for ys in school.years:
+        changes = {}
+        if ys.admission_rate is not None and not 0 <= ys.admission_rate <= 1:
+            changes["admission_rate"] = None
+        for name, (lo, hi) in (("sat_rw", SAT_RANGE), ("sat_math", SAT_RANGE), ("act", ACT_RANGE)):
+            if not _in_range(getattr(ys, name), lo, hi):
+                changes[name] = None
+        for name in changes:
+            log.warning("Scorecard: implausible %s for %s in %s (%s); stored as NULL",
+                        name, school.scorecard_id, ys.year, getattr(ys, name))
+        years.append(dataclasses.replace(ys, **changes) if changes else ys)
+    return dataclasses.replace(school, years=years)
+
+
+def _has_scores(ys: YearStats) -> bool:
+    return ys.sat_rw is not None or ys.sat_math is not None or ys.act is not None
 
 
 def upsert_institution(conn, school: School, source_id: int, source_url: str) -> int:
@@ -114,7 +157,7 @@ def upsert_year(conn, inst_id: int, all_program_id: int, ys: YearStats, source_i
                    fetched_at = excluded.fetched_at""",
             (all_program_id, ys.year, PATHWAY, ys.admission_rate, source_id, source_url),
         )
-    if ys.sat_rw is not None or ys.sat_math is not None or ys.act is not None:
+    if _has_scores(ys):
         conn.execute(
             """insert into admission_requirement (program_id, year, pathway, system_code, requirement,
                                                   source_id, source_url, fetched_at)
@@ -172,7 +215,12 @@ class ScorecardJob:
             time.sleep(1)
         self._requested = True
         resp = client.get(SCORECARD_URL, params={**params, "api_key": self.api_key})
-        resp.raise_for_status()
+        if not resp.is_success:
+            # httpx's own HTTPStatusError message embeds the full URL, API key included; the
+            # ~4 KB fields list is dropped too, keeping only the page number.
+            url = resp.request.url.copy_remove_param("api_key").copy_with(query=None)
+            where = f" page {params['page']}" if "page" in params else " (year probe)"
+            raise ScorecardHttpError(f"HTTP {resp.status_code} for {url}{where}")
         return resp
 
     def latest_year(self, client) -> int:
@@ -186,30 +234,45 @@ class ScorecardJob:
             f"no admissions data for any year {start - MAX_PROBE_YEARS + 1}..{start}")
 
     def run(self, conn) -> int:
+        if not self.api_key:
+            raise ScorecardConfigError("SCORECARD_API_KEY is not set")
         client = self.client or httpx.Client(timeout=60)
         source_id = ensure_source(conn, "scorecard")
         program_map = load_program_map()
         latest = self.latest_year(client)
         years = [latest - i for i in range(YEARS_BACK + 1)]
         fields = fields_param(years)
-        processed = 0
+        processed = with_scores = with_tuition = 0
         page = 0
-        while True:
+        done = False
+        while not done:
             resp = self._get(client, {**BASE_FILTER, "per_page": PER_PAGE, "page": page,
                                       "sort": "id", "fields": fields})
             data = resp.json()
             results = data.get("results") or []
-            source_url = str(resp.request.url.copy_remove_param("api_key"))
-            for rec in results:
-                school = parse_school(rec, years)
-                inst_id = upsert_institution(conn, school, source_id, source_url)
-                all_id = upsert_programs(conn, inst_id, school, program_map, source_id, source_url)
-                for ys in school.years:
-                    upsert_year(conn, inst_id, all_id, ys, source_id, source_url)
-                processed += 1
-                if self.limit is not None and processed >= self.limit:
-                    return processed
+            # Pipeline mode batches each school's writes; statements that return an id sync.
+            with conn.pipeline():
+                for rec in results:
+                    school = validate_school(parse_school(rec, years))
+                    source_url = SCHOOL_PAGE_URL.format(id=school.scorecard_id)
+                    inst_id = upsert_institution(conn, school, source_id, source_url)
+                    all_id = upsert_programs(conn, inst_id, school, program_map, source_id, source_url)
+                    for ys in school.years:
+                        upsert_year(conn, inst_id, all_id, ys, source_id, source_url)
+                    newest = school.years[0]
+                    with_scores += _has_scores(newest)
+                    with_tuition += newest.tuition_in_state is not None
+                    processed += 1
+                    if self.limit is not None and processed >= self.limit:
+                        done = True
+                        break
             total = (data.get("metadata") or {}).get("total", 0)
             if not results or (page + 1) * PER_PAGE >= total:
-                return processed
+                done = True
             page += 1
+        if processed >= COVERAGE_CHECK_MIN_SCHOOLS:
+            score_cov, tuition_cov = with_scores / processed, with_tuition / processed
+            if score_cov < MIN_SCORE_COVERAGE or tuition_cov < MIN_TUITION_COVERAGE:
+                raise ScorecardDataError(
+                    f"implausible coverage for {latest}: sat/act {score_cov:.0%}, tuition {tuition_cov:.0%}")
+        return processed

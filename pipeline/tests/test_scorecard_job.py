@@ -53,9 +53,22 @@ def test_probes_latest_year_skipping_empty_years(db, httpx_mock):
     assert r.status == "success" and r.rows_written == 3
     years = {x[0] for x in db.execute("select distinct year from admission_stat")}
     assert years == {2024, 2023, 2022}
-    urls = [x[0] for x in db.execute("select distinct source_url from institution where scorecard_id is not null")]
-    assert urls and all("api_key" not in u and "2024.admissions" in u for u in urls)
-    assert all("2022.admissions" in u for u in urls)
+    for t in TABLES:
+        urls = db.execute(f"select distinct source_url from {t}").fetchall()
+        assert urls and all("api_key" not in u for (u,) in urls)
+    rows = db.execute("select scorecard_id, source_url from institution where scorecard_id is not null").fetchall()
+    assert len(rows) == 3
+    assert all(u == f"https://collegescorecard.ed.gov/school/?{sid}" for sid, u in rows)
+    stanford_urls = {x[0] for x in db.execute(
+        """select p.source_url from program p join institution i on i.id=p.institution_id where i.scorecard_id=243744
+           union select c.source_url from cost c join institution i on i.id=c.institution_id where i.scorecard_id=243744
+           union select s.source_url from institution_stat s join institution i on i.id=s.institution_id
+                 where i.scorecard_id=243744
+           union select r.source_url from admission_requirement r join program p on p.id=r.program_id
+                 join institution i on i.id=p.institution_id where i.scorecard_id=243744
+           union select a.source_url from admission_stat a join program p on p.id=a.program_id
+                 join institution i on i.id=p.institution_id where i.scorecard_id=243744""")}
+    assert stanford_urls == {"https://collegescorecard.ed.gov/school/?243744"}
     reqs = httpx_mock.get_requests()
     assert all(q.url.params["api_key"] == "k1" for q in reqs)
     assert len(reqs) == 4  # 2026, 2025, 2024 probes + one page
@@ -144,6 +157,52 @@ def test_limit_stops_early_and_http_error_fails(db, httpx_mock):
     page(httpx_mock, status_code=429, json=None)
     r = run_job(ScorecardJob(client=httpx.Client(), api_key="k1", today=TODAY), db)
     assert r.status == "failed" and "429" in r.error
+    assert "k1" not in r.error and "api_key" not in r.error
+    assert len(r.error) < 200
+
+
+def test_missing_api_key_fails_without_requests(db, httpx_mock):
+    r = run_job(ScorecardJob(client=httpx.Client(), api_key="", today=TODAY), db)
+    assert r.status == "failed"
+    assert r.error == "ScorecardConfigError: SCORECARD_API_KEY is not set"
+    assert httpx_mock.get_requests() == []
+
+
+def _record(base: dict, **changes) -> dict:
+    rec = json.loads(json.dumps(base))
+    rec.update(changes)
+    return rec
+
+
+def test_implausible_coverage_fails_and_writes_nothing(db, httpx_mock):
+    blank = {k: None for k in SAMPLE["results"][1]
+             if k.split(".", 1)[0].isdigit() and ("_scores." in k or ".tuition." in k)}
+    results = [_record(SAMPLE["results"][1], id=800000 + i, **blank) for i in range(100)]
+    latest_2024(httpx_mock)
+    page(httpx_mock, json={"metadata": {"page": 0, "total": 100, "per_page": 100}, "results": results})
+    r = run_job(ScorecardJob(client=httpx.Client(), api_key="k1", today=TODAY), db)
+    assert r.status == "failed" and "ScorecardDataError" in r.error
+    assert "2024" in r.error
+    assert db.execute("select count(*) from institution").fetchone()[0] == 0
+
+
+def test_out_of_range_values_stored_as_null(db, httpx_mock):
+    bad = _record(SAMPLE["results"][0], **{
+        "2024.admissions.admission_rate.overall": 1.5,
+        "2024.admissions.sat_scores.25th_percentile.math": 100,
+    })
+    latest_2024(httpx_mock)
+    page(httpx_mock, json={**SAMPLE, "results": [bad, *SAMPLE["results"][1:]]})
+    r = run_job(ScorecardJob(client=httpx.Client(), api_key="k1", today=TODAY), db)
+    assert r.status == "success"
+    iid = db.execute("select id from institution where scorecard_id=243744").fetchone()[0]
+    rates = db.execute("""select s.admission_rate from admission_stat s join program p on p.id=s.program_id
+                          where p.institution_id=%s and s.year=2024""", (iid,)).fetchall()
+    assert all(rate is None for (rate,) in rates)
+    req = db.execute("""select r.requirement from admission_requirement r join program p on p.id=r.program_id
+                        where p.institution_id=%s and r.year=2024""", (iid,)).fetchone()[0]
+    assert req["sat"]["math"] is None and req["sat"]["total"] is None
+    assert req["sat"]["rw"] == {"p25": 740, "p75": 780}
 
 
 def test_one_second_between_every_request_including_retry(db, httpx_mock, monkeypatch):
