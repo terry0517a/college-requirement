@@ -40,3 +40,10 @@ def test_failure_rolls_back_job_writes(db):
             raise RuntimeError("after write")
     run_job(WritingJob(), db)
     assert db.execute("select count(*) from source where code='tmp'").fetchone()[0] == 0
+
+def test_row_count_guard_opt_out(db):
+    class NoGuardJob(FakeJob):
+        row_count_guard = False
+    run_job(NoGuardJob(rows=100), db)
+    r = run_job(NoGuardJob(rows=1), db)
+    assert r.status == "success" and r.rows_written == 1

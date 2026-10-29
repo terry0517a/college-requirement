@@ -34,7 +34,8 @@ def _attempt(job: Job, conn) -> int:
             "order by id desc limit 1",
             (job.name,),
         ).fetchone()
-        if prev and prev[0] and rows < prev[0] * MIN_ROW_RATIO:
+        guarded = getattr(job, "row_count_guard", True)
+        if guarded and prev and prev[0] and rows < prev[0] * MIN_ROW_RATIO:
             raise RowCountDropped(f"row count dropped from {prev[0]} to {rows}")
         return rows
 
