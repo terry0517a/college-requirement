@@ -144,3 +144,17 @@ def test_limit_stops_early_and_http_error_fails(db, httpx_mock):
     page(httpx_mock, status_code=429, json=None)
     r = run_job(ScorecardJob(client=httpx.Client(), api_key="k1", today=TODAY), db)
     assert r.status == "failed" and "429" in r.error
+
+
+def test_one_second_between_every_request_including_retry(db, httpx_mock, monkeypatch):
+    # Each sleep records how many requests had gone out when it was called.
+    sleeps = []
+    monkeypatch.setattr("collegedata.jobs.scorecard.time.sleep",
+                        lambda s: sleeps.append((s, len(httpx_mock.get_requests()))))
+    latest_2024(httpx_mock)
+    page(httpx_mock, status_code=429, json=None)
+    r = run_job(ScorecardJob(client=httpx.Client(), api_key="k1", today=TODAY), db)
+    assert r.status == "failed" and "429" in r.error
+    n = len(httpx_mock.get_requests())
+    assert n == 8  # (3 probes + 1 page) x 2 attempts
+    assert sleeps == [(1, k) for k in range(1, n)]

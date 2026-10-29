@@ -163,7 +163,11 @@ class ScorecardJob:
         self._requested = False
 
     def _get(self, client: httpx.Client, params: dict) -> httpx.Response:
-        """One API request; waits 1 s after the previous one and fails on any non-2xx."""
+        """One API request; fails on any non-2xx.
+
+        Waits 1 s after the previous request made by this instance, including across the
+        runner's retry (which reuses the instance), so the retry never follows a 429 at once.
+        """
         if self._requested:
             time.sleep(1)
         self._requested = True
@@ -183,7 +187,6 @@ class ScorecardJob:
 
     def run(self, conn) -> int:
         client = self.client or httpx.Client(timeout=60)
-        self._requested = False
         source_id = ensure_source(conn, "scorecard")
         program_map = load_program_map()
         latest = self.latest_year(client)
