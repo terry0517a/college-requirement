@@ -64,10 +64,12 @@ def run_job(job: Job, conn) -> FetchResult:
 def _register_jobs() -> None:
     from collegedata.jobs.hipo import HipoJob
 
+    from collegedata.jobs.openalex import OpenAlexJob
     from collegedata.jobs.uac import UacJob
 
     REGISTRY["hipo"] = lambda: HipoJob()
     REGISTRY["uac"] = lambda: UacJob()
+    REGISTRY["openalex"] = lambda: OpenAlexJob()
 
 
 _register_jobs()
