@@ -7,6 +7,7 @@ from collegedata.runner import run_job
 FIXDIR = pathlib.Path(__file__).with_name("fixtures")
 NTU = json.loads((FIXDIR / "openalex_ntu.json").read_text())
 HIPO = [r for r in json.loads((FIXDIR / "hipo_sample.json").read_text()) if r["domains"][0] == "ntu.edu.tw"]
+FIX_ALL = json.loads((FIXDIR / "hipo_sample.json").read_text())
 
 def test_writes_top10_strengths_and_ids(db, httpx_mock):
     upsert_institutions(db, HIPO, ensure_source(db, "hipo"), "http://x")
@@ -60,9 +61,10 @@ def test_refresh_removes_stale_topics(db, httpx_mock):
 
 def test_skips_openalex_id_owned_by_other_institution(db, httpx_mock):
     upsert_institutions(db, HIPO + [OLD], ensure_source(db, "hipo"), "http://x")
-    db.execute("update institution set openalex_id=%s where domain='ntu.edu.tw'", (NTU["results"][0]["id"],))
+    db.execute("update institution set openalex_id=%s, openalex_checked_at=now() where domain='ntu.edu.tw'",
+               (NTU["results"][0]["id"],))
     httpx_mock.add_response(url=URL_RE, json=NTU)
-    r = run_job(OpenAlexJob(client=httpx.Client(), limit=1), db)  # only the NULL-openalex_id one is selected
+    r = run_job(OpenAlexJob(client=httpx.Client(), limit=1), db)  # only the never-checked one is selected
     assert r.status == "success" and r.rows_written == 0
     assert db.execute("select openalex_id from institution where domain='old.ntu.tw'").fetchone()[0] is None
     assert db.execute("select count(*) from strength").fetchone()[0] == 0
@@ -119,3 +121,19 @@ def test_ror_source_url_and_topic_order(db, httpx_mock):
     expected = sorted((t["count"] for t in NTU["results"][0]["topics"]), reverse=True)[:10]
     assert counts == expected
     assert all("api_key" not in u and "search=" in u for _, u in rows)
+
+def test_all_requests_failing_marks_job_failed(db, httpx_mock, monkeypatch):
+    monkeypatch.setattr("collegedata.jobs.openalex.time.sleep", lambda s: None)
+    upsert_institutions(db, HIPO, ensure_source(db, "hipo"), "http://x")
+    httpx_mock.add_response(url=URL_RE, status_code=500, is_reusable=True)
+    r = run_job(OpenAlexJob(client=httpx.Client()), db)
+    assert r.status == "failed" and "OpenAlexAllFailed" in r.error
+
+def test_checked_at_set_and_unchecked_come_first(db, httpx_mock, monkeypatch):
+    monkeypatch.setattr("collegedata.jobs.openalex.time.sleep", lambda s: None)
+    upsert_institutions(db, FIX_ALL, ensure_source(db, "hipo"), "http://x")
+    db.execute("update institution set openalex_checked_at = now() - interval '1 day' where domain='ntu.edu.tw'")
+    httpx_mock.add_response(url=URL_RE, json=NTU, is_reusable=True)
+    run_job(OpenAlexJob(client=httpx.Client(), limit=2), db)
+    assert db.execute("select openalex_checked_at from institution where domain='ntu.edu.tw'").fetchone()[0] < \
+        db.execute("select min(openalex_checked_at) from institution where domain<>'ntu.edu.tw'").fetchone()[0]
