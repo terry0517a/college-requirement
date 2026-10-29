@@ -6,7 +6,8 @@ from psycopg.types.json import Jsonb
 
 from collegedata.cac_http import BusyError, CacFetcher, make_client
 from collegedata.jobs.cac_common import (
-    BASE, Budget, done_units, finish, merge_requirement, record_unit, upsert_program,
+    BASE, Budget, UnitQualityError, UnitStats, done_units, finish, merge_requirement, run_units,
+    upsert_program,
 )
 from collegedata.jobs.uac import UnknownSchoolError, _institution_id, load_school_map
 from collegedata.parsers.cac_sieve import SieveRow, normalize_program_name, parse_sieve_image
@@ -17,14 +18,6 @@ MAX_SKIP_RATIO = 0.05
 TIEBREAK = "同級分超額篩選"
 
 log = logging.getLogger(__name__)
-
-
-class UnitQualityError(ValueError):
-    """The parse was unusable; carries rows_skipped for the cac_fetch diagnostic."""
-
-    def __init__(self, msg: str, rows_skipped: int = 0):
-        super().__init__(msg)
-        self.rows_skipped = rows_skipped
 
 
 def target_years(today: datetime.date) -> list[int]:
@@ -79,57 +72,31 @@ class CacSieveJob:
         school_map = load_school_map()
         cache: dict[str, int] = {}
         years = target_years(self.today or datetime.date.today())
-        attempted = succeeded = processed = written = 0
-        busy = False
+        stats = UnitStats()
         for i, roc in enumerate(years):
             list_url = college_list_url(roc)
             try:
                 resp = self.fetcher.get(list_url)
             except BusyError:
-                if succeeded == 0:
+                if stats.succeeded == 0:
                     raise
-                log.warning("CAC sieve: busy fetching %s; stopping with %d schools done", list_url, succeeded)
+                log.warning("CAC sieve: busy fetching %s; stopping with %d schools done", list_url, stats.succeeded)
                 break
             if resp.status_code == 404 and i > 0:
                 log.warning("CAC sieve: %s returned 404 for ROC year %s; skipping", list_url, roc)
                 continue
             resp.raise_for_status()
             done = done_units(conn, self.name, roc)
-            units = [(c, n) for c, n in parse_college_list(resp.text) if c not in done]
-            for code, school_zh in units:
-                if budget.exhausted(processed):
-                    break
-                attempted += 1
-                url = image_url(roc, code)
-                cache_before = dict(cache)
-                try:
-                    with conn.transaction():
-                        n, skipped = self._process(conn, roc, code, school_zh, url, school_map, cache, source_id)
-                        record_unit(conn, self.name, roc, code, url, "done", n, skipped, None)
-                except BusyError:
-                    cache.clear()
-                    cache.update(cache_before)
-                    if succeeded == 0:
-                        raise
-                    log.warning("CAC sieve: busy at %s/%s; stopping with %d schools done", roc, code, succeeded)
-                    busy = True
-                    break
-                except UnknownSchoolError:
-                    raise
-                except Exception as e:  # noqa: BLE001 - recorded per unit
-                    # The savepoint rolled back any institution inserted for this unit.
-                    cache.clear()
-                    cache.update(cache_before)
-                    log.warning("CAC sieve %s/%s failed: %s: %s", roc, code, type(e).__name__, e)
-                    record_unit(conn, self.name, roc, code, url, "failed", 0, getattr(e, "rows_skipped", 0), f"{type(e).__name__}: {e}")
-                else:
-                    succeeded += 1
-                    written += n
-                processed += 1
-            if busy:
+            names = {c: n for c, n in parse_college_list(resp.text) if c not in done}
+            run_units(
+                conn, self.name, [(roc, c, image_url(roc, c)) for c in names],
+                lambda r, c: self._process(conn, r, c, names[c], image_url(r, c), school_map, cache, source_id),
+                budget, cache, "CAC sieve", stats,
+            )
+            if stats.busy:
                 break
-        finish(attempted, succeeded, self.name)
-        return written
+        finish(stats.attempted, stats.succeeded, self.name)
+        return stats.written
 
     def _process(self, conn, roc, code, school_zh, url, school_map, cache, source_id) -> tuple[int, int]:
         png = self.fetcher.download(url)

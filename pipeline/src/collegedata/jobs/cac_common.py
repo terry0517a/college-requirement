@@ -1,15 +1,20 @@
 """Helpers shared by the cac.edu.tw jobs."""
+import logging
 import os
 import time
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Callable
+from typing import Callable, Iterable
 
 from psycopg.types.json import Jsonb
+
+from collegedata.cac_http import BusyError
 
 BASE = "https://www.cac.edu.tw"
 DEFAULT_MAX_SCHOOLS = 10
 DEFAULT_TIME_BUDGET_MINUTES = 75
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -79,3 +84,65 @@ def merge_requirement(conn, program_id, year, requirement: dict, source_id, sour
 def finish(attempted: int, succeeded: int, job: str) -> None:
     if attempted >= 1 and succeeded == 0:
         raise RuntimeError(f"{job}: all {attempted} units failed")
+
+
+class UnitQualityError(ValueError):
+    """The parse was unusable; carries rows_skipped for the cac_fetch diagnostic."""
+
+    def __init__(self, msg: str, rows_skipped: int = 0):
+        super().__init__(msg)
+        self.rows_skipped = rows_skipped
+
+
+@dataclass
+class UnitStats:
+    attempted: int = 0
+    succeeded: int = 0
+    processed: int = 0
+    written: int = 0
+    busy: bool = False
+
+
+def run_units(conn, job: str, units: Iterable[tuple[int, str, str]],
+              process: Callable[[int, str], tuple[int, int]], budget: Budget,
+              cache: dict, log_prefix: str, stats: UnitStats | None = None) -> UnitStats:
+    """Run (roc_year, school_code, url) units, each in its own savepoint.
+
+    process(roc, code) -> (rows_written, rows_skipped). Pass the same `stats` across
+    calls to share budget/busy accounting. BusyError stops the loop (stats.busy) once
+    something has succeeded, else is re-raised. UnknownSchoolError aborts the job;
+    any other error records the unit as failed and continues.
+    """
+    from collegedata.jobs.uac import UnknownSchoolError  # uac imports this module
+
+    st = stats or UnitStats()
+    for roc, code, url in units:
+        if budget.exhausted(st.processed):
+            break
+        st.attempted += 1
+        cache_before = dict(cache)
+        try:
+            with conn.transaction():
+                n, skipped = process(roc, code)
+                record_unit(conn, job, roc, code, url, "done", n, skipped, None)
+        except BusyError:
+            cache.clear()
+            cache.update(cache_before)
+            if st.succeeded == 0:
+                raise
+            log.warning("%s: busy at %s/%s; stopping with %d schools done", log_prefix, roc, code, st.succeeded)
+            st.busy = True
+            break
+        except UnknownSchoolError:
+            raise
+        except Exception as e:  # noqa: BLE001 - recorded per unit
+            # The savepoint rolled back any institution inserted for this unit.
+            cache.clear()
+            cache.update(cache_before)
+            log.warning("%s %s/%s failed: %s: %s", log_prefix, roc, code, type(e).__name__, e)
+            record_unit(conn, job, roc, code, url, "failed", 0, getattr(e, "rows_skipped", 0), f"{type(e).__name__}: {e}")
+        else:
+            st.succeeded += 1
+            st.written += n
+        st.processed += 1
+    return st

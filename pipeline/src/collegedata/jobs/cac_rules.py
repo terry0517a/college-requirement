@@ -1,9 +1,9 @@
 import datetime
 import logging
 
-from collegedata.cac_http import BusyError, CacFetcher, make_client
+from collegedata.cac_http import CacFetcher, make_client
 from collegedata.jobs.cac_common import (
-    BASE, Budget, done_units, finish, merge_requirement, record_unit, upsert_program,
+    BASE, Budget, UnitQualityError, done_units, finish, merge_requirement, run_units, upsert_program,
 )
 from collegedata.jobs.uac import UnknownSchoolError, _institution_id, load_school_map
 from collegedata.parsers.cac_rules import (
@@ -17,14 +17,6 @@ log = logging.getLogger(__name__)
 
 class NotPublishedYet(Exception):
     pass
-
-
-class UnitQualityError(ValueError):
-    """Every page of the school failed to parse; carries rows_skipped for cac_fetch."""
-
-    def __init__(self, msg: str, rows_skipped: int = 0):
-        super().__init__(msg)
-        self.rows_skipped = rows_skipped
 
 
 def target_year(today: datetime.date) -> int:
@@ -80,42 +72,18 @@ class CacRulesJob:
             raise NotPublishedYet(f"CAC ROC {roc} rules system not published")
         total = self.fetcher.get(system + "TotalGsdShow.htm")
         done = done_units(conn, self.name, roc)
-        units = sorted((c, n) for c, n, _ in parse_total_gsd(total.text) if c not in done)
+        units = sorted(c for c, _, _ in parse_total_gsd(total.text) if c not in done)
 
         source_id = ensure_source(conn, "cac")
         school_map = load_school_map()
         cache: dict[str, int] = {}
-        attempted = succeeded = processed = written = 0
-        for code, _school_zh in units:
-            if budget.exhausted(processed):
-                break
-            attempted += 1
-            url = system + "ShowGsd.php"
-            cache_before = dict(cache)
-            try:
-                with conn.transaction():
-                    n, skipped = self._process(conn, roc, code, system, school_map, cache, source_id)
-                    record_unit(conn, self.name, roc, code, url, "done", n, skipped, None)
-            except BusyError:
-                cache.clear()
-                cache.update(cache_before)
-                if succeeded == 0:
-                    raise
-                log.warning("CAC rules: busy at %s/%s; stopping with %d schools done", roc, code, succeeded)
-                break
-            except UnknownSchoolError:
-                raise
-            except Exception as e:  # noqa: BLE001 - recorded per unit
-                cache.clear()
-                cache.update(cache_before)
-                log.warning("CAC rules %s/%s failed: %s: %s", roc, code, type(e).__name__, e)
-                record_unit(conn, self.name, roc, code, url, "failed", 0, getattr(e, "rows_skipped", 0), f"{type(e).__name__}: {e}")
-            else:
-                succeeded += 1
-                written += n
-            processed += 1
-        finish(attempted, succeeded, self.name)
-        return written
+        stats = run_units(
+            conn, self.name, [(roc, c, system + "ShowGsd.php") for c in units],
+            lambda r, c: self._process(conn, r, c, system, school_map, cache, source_id),
+            budget, cache, "CAC rules",
+        )
+        finish(stats.attempted, stats.succeeded, self.name)
+        return stats.written
 
     def _process(self, conn, roc, code, system, school_map, cache, source_id) -> tuple[int, int]:
         listing = self.fetcher.post(

@@ -56,7 +56,8 @@ def test_merge_keeps_sieve_keys_written_earlier(db, httpx_mock):
     sid = ensure_source(db, "cac")
     inst = _institution_id(db, {}, "國立臺灣大學", load_school_map(), sid, "u")
     pid = upsert_program(db, inst, "資訊工程學系", sid, "u")
-    merge_requirement(db, pid, 2026, {"quota": 57, "thresholds": {"英文": "頂標"}, "sources": {"sieve_image": "img"}}, sid, "img")
+    merge_requirement(db, pid, 2026, {"quota": 57, "thresholds": {"英文": "頂標"}, "group": "第一類組",
+                                       "extra": {"note": "x"}, "sources": {"sieve_image": "img"}}, sid, "img")
     httpx_mock.add_response(url=query_url(115), text=QUERY)
     httpx_mock.add_response(url=SYS + "TotalGsdShow.htm", text=TOTAL)
     httpx_mock.add_response(url=SYS + "ShowGsd.php", method="POST", text=ONE_CODE)
@@ -65,6 +66,7 @@ def test_merge_keeps_sieve_keys_written_earlier(db, httpx_mock):
     req = db.execute("select requirement from admission_requirement where program_id=%s", (pid,)).fetchone()[0]
     assert req["sources"] == {"sieve_image": "img", "rules_page": SYS + "html/115_001582.htm?v=1.0"}
     assert "stage2" in req and req["quota"] == 57
+    assert req["group"] == "第一類組" and req["extra"] == {"note": "x"}
     assert db.execute("select count(*) from program").fetchone() == (1,)
 
 def test_done_school_not_refetched_and_budget(db, httpx_mock):
@@ -99,3 +101,17 @@ def test_school_with_only_unparseable_pages_is_not_success(db, httpx_mock):
     httpx_mock.add_response(url=SYS + "html/115_001582.htm?v=1.0", text="<html>not a rules page</html>", is_reusable=True)
     r = run_job(_job(max_schools=1), db)
     assert r.status == "failed" and "all 1 units failed" in r.error   # not counted as done
+    assert db.execute("select count(*) from program").fetchone() == (0,)
+    assert db.execute("select count(*) from admission_requirement").fetchone() == (0,)
+
+
+def test_partial_skip_school_is_done_with_rows_skipped(db, httpx_mock):
+    two = ONE_CODE + '<a href="./html/115_001583.htm?v=1.0">詳細資料</a>'
+    httpx_mock.add_response(url=query_url(115), text=QUERY)
+    httpx_mock.add_response(url=SYS + "TotalGsdShow.htm", text=TOTAL)
+    httpx_mock.add_response(url=SYS + "ShowGsd.php", method="POST", text=two)
+    httpx_mock.add_response(url=SYS + "html/115_001582.htm?v=1.0", text=PAGE)
+    httpx_mock.add_response(url=SYS + "html/115_001583.htm?v=1.0", text="<html>not a rules page</html>")
+    r = run_job(_job(max_schools=1), db)
+    assert r.status == "success" and r.rows_written == 1
+    assert db.execute("select status, rows_written, rows_skipped from cac_fetch where school_code='001'").fetchone() == ("done", 1, 1)
