@@ -560,7 +560,7 @@ git commit -m "feat(pipeline): OpenAlex job links institutions and stores top re
 
 - [ ] **Step 2: 寫 `pipeline.yml`**
 
-觸發：`schedule`（三條 cron：`0 3 1 * *` 跑 `hipo`、`0 4 1 */3 *` 跑 `openalex`、`0 5 20 8 *` 跑 `uac`）與 `workflow_dispatch`（輸入 `job`，可選 `hipo`/`uac`/`openalex`）。用 `strategy.matrix` 或依 `github.event.schedule` 決定 job 名稱。步驟：checkout、setup-python、uv sync、`uv run collegedata run ${JOB}`，環境變數從 secrets `DATABASE_URL`、`OPENALEX_API_KEY` 取。最後一步 `if: failure()` 用 `actions/github-script` 建立 Issue：標題 `[pipeline] <job> failed on <date>`，內文含 workflow run 連結，`assignees: [context.repo.owner]`（GitHub 會寄 email 給被指派者，即儲存庫擁有者 cyw0517terry@gmail.com）。
+觸發：`schedule`（三條 cron，全部每週：`0 3 * * 1` 跑 `hipo`、`0 4 * * 2` 跑 `openalex`、`0 5 * * 3` 跑 `uac`（2026-10-29 依使用者要求改為每週））與 `workflow_dispatch`（輸入 `job`，可選 `hipo`/`uac`/`openalex`）。用 `strategy.matrix` 或依 `github.event.schedule` 決定 job 名稱。步驟：checkout、setup-python、uv sync、`uv run collegedata run ${JOB}`，環境變數從 secrets `DATABASE_URL`、`OPENALEX_API_KEY` 取。最後一步 `if: failure()` 用 `actions/github-script` 建立 Issue：標題 `[pipeline] <job> failed on <date>`，內文含 workflow run 連結，`assignees: [context.repo.owner]`（GitHub 會寄 email 給被指派者，即儲存庫擁有者 cyw0517terry@gmail.com）。
 
 - [ ] **Step 3: 寫 `docs/deploy.md`**
 
