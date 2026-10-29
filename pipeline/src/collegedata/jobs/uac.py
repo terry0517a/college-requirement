@@ -39,8 +39,14 @@ def load_years() -> list[dict]:
 
 
 def year_urls(today: datetime.date | None = None) -> list[tuple[int, str]]:
-    """The current ROC year and the two before it, newest first."""
-    roc = (today or datetime.date.today()).year - 1911
+    """The newest ROC year and the two before it, newest first.
+
+    UAC publishes each year's distribution results around August, so the newest
+    year's PDF usually does not exist before then. From September on, the
+    current ROC year is the newest; before September the previous ROC year is.
+    """
+    d = today or datetime.date.today()
+    roc = d.year - 1911 if d.month >= 9 else d.year - 1912
     overrides = {e["roc_year"]: e["url"] for e in load_years()}
     return [(y, overrides.get(y, URL_PATTERN.format(roc=y))) for y in range(roc, roc - YEARS_BACK - 1, -1)]
 
