@@ -70,11 +70,13 @@ def _register_jobs() -> None:
     from collegedata.jobs.hipo import HipoJob
 
     from collegedata.jobs.openalex import OpenAlexJob
+    from collegedata.jobs.scorecard import ScorecardJob
     from collegedata.jobs.uac import UacJob
 
     REGISTRY["hipo"] = lambda: HipoJob()
     REGISTRY["uac"] = lambda: UacJob()
     REGISTRY["openalex"] = lambda: OpenAlexJob()
+    REGISTRY["scorecard"] = lambda: ScorecardJob()
 
 
 _register_jobs()

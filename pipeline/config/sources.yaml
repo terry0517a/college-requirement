@@ -10,3 +10,7 @@ openalex:
   name: OpenAlex
   url: https://openalex.org/
   license: CC0
+scorecard:
+  name: College Scorecard (U.S. Department of Education)
+  url: https://collegescorecard.ed.gov/
+  license: Public domain (U.S. Government work)
