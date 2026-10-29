@@ -1,7 +1,8 @@
-"""Geometry and text normalisation for the CAC 篩選標準一覽表 PNG (no OCR here)."""
+"""Geometry, per-cell OCR and row parsing for the CAC 篩選標準一覽表 PNG."""
 from __future__ import annotations
 
 import io
+import logging
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -10,6 +11,8 @@ from typing import Protocol
 
 import numpy as np
 from PIL import Image
+
+log = logging.getLogger(__name__)
 
 LINE_DARK = 160   # gray below this counts as part of a grid line
 INK_DARK = 110    # gray below this counts as text ink
@@ -214,6 +217,7 @@ class RapidOcrEngine:
     """Per-line recognition only (use_det=False); whole-image detection misreads this table."""
 
     TARGET_HEIGHT = 40
+    MAX_WIDTH = 1600  # rapidocr raises ResizeImgError on very wide inputs
 
     def __init__(self) -> None:
         from rapidocr_onnxruntime import RapidOCR  # lazy: model load is slow
@@ -225,6 +229,10 @@ class RapidOcrEngine:
         if h < self.TARGET_HEIGHT:
             w = max(1, round(line.shape[1] * self.TARGET_HEIGHT / h))
             line = np.asarray(Image.fromarray(line).resize((w, self.TARGET_HEIGHT), Image.LANCZOS))
+        if line.shape[1] > self.MAX_WIDTH:
+            # the only case where we downscale: a very wide line (page title/notes) would crash the engine
+            h2 = max(1, round(line.shape[0] * self.MAX_WIDTH / line.shape[1]))
+            line = np.asarray(Image.fromarray(line).resize((self.MAX_WIDTH, h2), Image.LANCZOS))
         img = np.ascontiguousarray(np.stack([line] * 3, axis=-1))
         result, _ = self._engine(img, use_det=False, use_cls=False)
         if not result:
@@ -243,11 +251,22 @@ KNOWN_HEADERS: dict[str, str] = {
     **{f"篩選順序{n}": f"sieve{i}" for i, n in enumerate("一二三四五六", 1)},
     "同級分超額篩選": "overflow",
 }
-# merged header cells are cut by the column grid, so labels often arrive truncated
-_HEADER_ALIASES = {
-    "校系名": "name", "招生名": "quota", "超額": "overflow", "可力超": "overflow",
-    **{f"順序{n}": f"sieve{i}" for i, n in enumerate("一二三四五六", 1)},
+# Every OCR-confusion workaround lives in this one table. All entries were observed on
+# tests/fixtures/cac/115_001_crop.png and 115_001_apcs_crop.png (rapidocr, per-cell recognition).
+OCR_CONFUSIONS = {
+    # merged header cells are cut by the column grid, so labels arrive truncated
+    "header_aliases": {
+        "校系名": "name", "招生名": "quota", "超額": "overflow", "可力超": "overflow",
+        **{f"順序{n}": f"sieve{i}" for i, n in enumerate("一二三四五六", 1)},
+    },
+    # the stylised 無 in the gender column is consistently read as 浦
+    "no_gender": {"無", "浦"},
+    # the small asterisk in the overflow column is consistently read as 水 (米/×/x are look-alikes)
+    "star": {"*", "＊", "水", "米", "×", "x"},
+    # the OCR model cannot read 戲 and drops it (prefix match)
+    "name_repairs": {"劇學系": "戲劇學系"},
 }
+_HEADER_ALIASES = OCR_CONFUSIONS["header_aliases"]
 _HEADER_KEYS = sorted(KNOWN_HEADERS, key=len, reverse=True)
 _ALIAS_KEYS = sorted(_HEADER_ALIASES, key=len, reverse=True)
 _BASE_KEYS = ("code", "gender", "name", "quota", "overflow")
@@ -311,29 +330,53 @@ class SieveParseResult:
 
 
 _DEFAULT_GROUP = "一般校系"
-_NO_GENDER = {"", "無", "浦"}  # the stylised 無 is consistently read as 浦
-_STARS = {"*", "＊", "水", "米", "×", "x"}  # the small asterisk is consistently read as 水
+
 _MAX_HEADER_ROWS = 3
 
 
-def _ocr_cell(gray: np.ndarray, y0: int, y1: int, x0: int, x1: int, ocr: OcrEngine) -> str:
-    return normalize_text("".join(ocr.recognize(ln) for ln in cell_lines(gray, y0, y1, x0, x1)))
+def _recognize(ocr: OcrEngine, line: np.ndarray, warnings: list[str]) -> str:
+    try:
+        return ocr.recognize(line)
+    except Exception as exc:  # an engine failure must not abort the whole image
+        warnings.append(f"ocr failed on line {line.shape}: {exc!r}")
+        return ""
 
 
-def _group_name(gray: np.ndarray, above: tuple[int, int] | None, ocr: OcrEngine) -> str:
-    if above is None:
-        return _DEFAULT_GROUP
-    lines = cell_lines(gray, above[0], above[1], 0, gray.shape[1])
+def _ocr_cell(gray: np.ndarray, y0: int, y1: int, x0: int, x1: int, ocr: OcrEngine,
+              warnings: list[str]) -> str:
+    lines = cell_lines(gray, y0, y1, x0, x1)
+    return normalize_text("".join(_recognize(ocr, ln, warnings) for ln in lines))
+
+
+def _group_name(gray: np.ndarray, above: tuple[int, int] | None, ocr: OcrEngine,
+                warnings: list[str]) -> str:
+    lines = cell_lines(gray, above[0], above[1], 0, gray.shape[1]) if above else []
     if not lines:
         return _DEFAULT_GROUP
-    text = normalize_text(ocr.recognize(lines[-1]))  # the marker is the line right above the table
+    # the marker is the line right above the table
+    text = normalize_text(_recognize(ocr, lines[-1], warnings))
     m = re.search(r"[【\[]([^】\]]+)", text)
-    return m.group(1) if m else _DEFAULT_GROUP
+    if not m:
+        warnings.append(f"group marker not recognised ({text!r}), using {_DEFAULT_GROUP}")
+        return _DEFAULT_GROUP
+    return m.group(1)
 
 
 def _repair_name(name: str) -> str:
-    # the OCR model cannot read 戲 and drops it
-    return "戲" + name if name.startswith("劇學系") else name
+    for prefix, fixed in OCR_CONFUSIONS["name_repairs"].items():
+        if name.startswith(prefix):
+            repaired = fixed + name[len(prefix):]
+            log.warning("name repaired: %r -> %r", name, repaired)
+            return repaired
+    return name
+
+
+def _parse_overflow(text: str) -> bool:
+    if not text or _is_missing(text):
+        return False
+    if text in OCR_CONFUSIONS["star"]:
+        return True
+    raise ValueError(f"bad overflow {text!r}")
 
 
 def _is_missing(text: str) -> bool:
@@ -363,6 +406,8 @@ def _build_row(cells: list[str], mapping: dict[int, tuple[str, str]], school_cod
             thresholds[key] = value
         else:
             value = parse_multiplier(text) if text else None
+            if value is not None and text.endswith("."):
+                log.warning("multiplier %r read with trailing dot, treated as %s", text, value)
             if text and not _is_missing(text) and value is None:
                 raise ValueError(f"bad multiplier {text!r}")
             multipliers[key] = value
@@ -370,7 +415,7 @@ def _build_row(cells: list[str], mapping: dict[int, tuple[str, str]], school_cod
     if not re.fullmatch(r"\d{6}", code) or code[:3] != school_code:
         raise ValueError(f"bad code {code!r}")
     gender = base.get("gender", "")
-    if gender not in _NO_GENDER and gender not in ("男", "女"):
+    if gender and gender not in OCR_CONFUSIONS["no_gender"] and gender not in ("男", "女"):
         raise ValueError(f"bad gender {gender!r}")
     gender = gender if gender in ("男", "女") else None
     if not base.get("name"):
@@ -378,7 +423,10 @@ def _build_row(cells: list[str], mapping: dict[int, tuple[str, str]], school_cod
     quota = parse_quota(base["quota"])
     levels = []
     for key in (f"sieve{n}" for n in range(1, 7)):
-        level = parse_sieve_cell(sieve_cells.get(key, ""))
+        text = sieve_cells.get(key, "")
+        level = parse_sieve_cell(text)
+        if level is None and not _is_missing(text):
+            raise ValueError(f"bad {key} {text!r}")
         if level is not None:
             level.order = len(levels) + 1
             levels.append(level)
@@ -386,7 +434,7 @@ def _build_row(cells: list[str], mapping: dict[int, tuple[str, str]], school_cod
         school_code=school_code, cac_code=code, gender=gender,
         name=normalize_program_name(_repair_name(base["name"]), gender), quota=quota, group=group,
         thresholds=thresholds, multipliers=multipliers, extra=extra, sieve=levels,
-        overflow_tiebreak=base.get("overflow", "") in _STARS, raw_cells=cells,
+        overflow_tiebreak=_parse_overflow(base.get("overflow", "")), raw_cells=cells,
     )
 
 
@@ -395,22 +443,27 @@ def _parse_table(gray: np.ndarray, table: Table, rows: list[tuple[int, int, bool
     xs = detect_vlines(gray, table.y0, table.y1)
     cols = list(zip(xs, xs[1:]))
     trows = [(y0, y1) for y0, y1, g in rows if g and y0 >= table.y0 and y1 <= table.y1]
-    group = _group_name(gray, table.above, ocr)
+    group = _group_name(gray, table.above, ocr, result.warnings)
     header_texts = [""] * len(cols)
     n_header = 0
+    mapping = None
     for y0, y1 in trows[:_MAX_HEADER_ROWS]:
-        if re.fullmatch(r"\d{6}", _ocr_cell(gray, y0, y1, *cols[0], ocr)):
+        first = _ocr_cell(gray, y0, y1, *cols[0], ocr, result.warnings)
+        if re.search(r"\d", first):  # a data row (possibly with a misread code)
             break
-        for i, (x0, x1) in enumerate(cols):
-            header_texts[i] += _ocr_cell(gray, y0, y1, x0, x1, ocr)
+        header_texts[0] += first
+        for i, (x0, x1) in enumerate(cols[1:], 1):
+            header_texts[i] += _ocr_cell(gray, y0, y1, x0, x1, ocr, result.warnings)
         n_header += 1
-    mapping = map_headers(header_texts)
+        mapping = map_headers(header_texts)
+        if mapping is not None:
+            break
     if mapping is None:
         result.warnings.append(f"skip table: unrecognised headers {header_texts}")
         return
     result.groups.append(group)
     for y0, y1 in trows[n_header:]:
-        cells = [_ocr_cell(gray, y0, y1, x0, x1, ocr) for x0, x1 in cols]
+        cells = [_ocr_cell(gray, y0, y1, x0, x1, ocr, result.warnings) for x0, x1 in cols]
         try:
             result.rows.append(_build_row(cells, mapping, school_code, group))
         except ValueError:
