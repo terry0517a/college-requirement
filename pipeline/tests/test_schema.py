@@ -1,4 +1,5 @@
 import pytest, psycopg
+from collegedata.sources import ensure_source
 
 def test_all_tables_exist(db):
     names = {r[0] for r in db.execute(
@@ -31,3 +32,30 @@ def test_openalex_id_unique(db):
     db.execute(sql, ("a.edu.tw", sid))
     with pytest.raises(psycopg.errors.UniqueViolation):
         db.execute(sql, ("b.edu.tw", sid))
+
+
+def test_0003_columns_and_tables(db):
+    names = {r[0] for r in db.execute(
+        "select table_name from information_schema.tables where table_schema='public'")}
+    assert {"field", "institution_stat"} <= names
+    cols = {r[0] for r in db.execute(
+        "select column_name from information_schema.columns where table_name='institution'")}
+    assert {"scorecard_id", "city", "region"} <= cols
+    assert db.execute("select count(*) from field").fetchone()[0] == 19
+    assert db.execute("select is_nullable from information_schema.columns "
+                      "where table_name='admission_stat' and column_name='admitted_count'").fetchone()[0] == "YES"
+
+def test_program_code_unique_per_institution(db):
+    sid = ensure_source(db, "hipo")
+    iid = db.execute("insert into institution(country_code,name_en,domain,source_id,source_url,fetched_at) "
+                     "values ('US','X','x.edu',%s,'u',now()) returning id", (sid,)).fetchone()[0]
+    db.execute("insert into program(institution_id,code,name_en,source_id,source_url,fetched_at) values (%s,'11','CS',%s,'u',now())", (iid, sid))
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        db.execute("insert into program(institution_id,code,name_en,source_id,source_url,fetched_at) values (%s,'11','CS',%s,'u',now())", (iid, sid))
+
+def test_program_field_code_must_exist(db):
+    sid = ensure_source(db, "hipo")
+    iid = db.execute("insert into institution(country_code,name_en,domain,source_id,source_url,fetched_at) "
+                     "values ('US','X','x.edu',%s,'u',now()) returning id", (sid,)).fetchone()[0]
+    with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        db.execute("insert into program(institution_id,code,field_code,source_id,source_url,fetched_at) values (%s,'99','nope',%s,'u',now())", (iid, sid))
