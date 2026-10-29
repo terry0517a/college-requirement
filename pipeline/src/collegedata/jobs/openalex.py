@@ -16,12 +16,14 @@ log = logging.getLogger(__name__)
 # Never-checked institutions first (by id), then the least recently checked, so
 # successive runs cycle through every institution within the daily budget and
 # institutions that can never be matched do not block the front of the queue.
+# Only institutions with at least one program are shown on the site, so others are skipped.
 SELECT_SQL = """
 select i.id, i.country_code, i.name_en
 from institution i
 left join (select institution_id, max(fetched_at) as last_fetched
            from strength group by institution_id) s on s.institution_id = i.id
 where i.name_en is not null
+  and exists (select 1 from program p where p.institution_id = i.id)
 order by (i.openalex_checked_at is null) desc,
          case when i.openalex_checked_at is null then i.id end,
          i.openalex_checked_at asc,
