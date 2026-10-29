@@ -78,7 +78,7 @@
 
 ### 5.1 既有資料表的用法
 
-- `institution`：甄選會校名對應到 `tw_institutions.csv`（名稱→英文名、網域）。新增 5 校。新增 `pipeline/config/tw_institution_aliases.yaml`：`別名: 正式名稱`（如 `馬偕醫學院: 馬偕醫學大學`），CSV 正式名改為「馬偕醫學大學」。考分會 job（`uac.py`）與甄選會 job 共用同一個解析函式 `resolve_school(name) -> 正式名稱`；未知校名仍然拋 `UnknownSchoolError` 讓執行失敗（與計畫 1 一致，Issue 會提示去補 CSV）。
+- `institution`：甄選會校名對應到 `tw_institutions.csv`（名稱→英文名、網域），與考分會共用同一份表與同一個 `_institution_id` 邏輯（以網域為鍵，同一網域的不同名稱視為同校，`name_zh` 以最後寫入者為準；CSV 已同時列出「馬偕醫學院」與「馬偕醫學大學」指向 mmc.edu.tw）。新增 5 校：國立臺北藝術大學 tnua.edu.tw、華梵大學 hfu.edu.tw、開南大學 knu.edu.tw、中信金融管理學院 ctbc.edu.tw、臺北基督學院 cct.edu.tw。未知校名拋 `UnknownSchoolError` 讓執行失敗（與計畫 1 一致，Issue 會提示去補 CSV）。
 - `program`：以 `(institution_id, name_zh)` upsert，與考分會對齊。甄選會名稱正規化規則：NFKC、去除空白、全形括號改半形；性別要求為「男」或「女」時，名稱加 `(男)`／`(女)` 後綴（對齊考分會）。`program.code` 不使用（CAC 校系代碼存在 JSON 內）。
 - `admission_requirement`（`pathway = 'tw_apply'`，`system_code = 'tw_gsat'`，`year = 學年 + 1911`）：一個校系一年一列。`requirement` JSON 由兩個 job 共同維護（jsonb 合併，各自只覆寫自己的鍵）：
 
@@ -223,4 +223,4 @@
 | OCR 錯值 | 逐格辨識＋值域驗證＋跳過率門檻；每列保留 `raw_cells` 於日誌；網站標示「OCR 自動辨識，以簡章為準」（計畫 3） |
 | 圖片版面改變 | 表頭對應找不到必要欄就整表跳過並警告；跳過率超過門檻 job 失敗 |
 | 校系分則系統網址改變 | 由 query.php 探索；找不到時依日期決定警告或失敗 |
-| 校名改變 | 別名表；未知校名讓執行失敗以提醒補表 |
+| 校名改變 | CSV 同一網域可列多個名稱；未知校名讓執行失敗以提醒補表 |
