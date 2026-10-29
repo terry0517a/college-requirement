@@ -381,14 +381,14 @@ git commit -m "feat(pipeline): parser for UAC distribution admission PDF"
 **Interfaces:**
 - Consumes: Task 4 的 `institution` 列（由 Hipo 建立，`name_zh` 為空）、Task 5 的 `parse_uac_pdf`。
 - Produces:
-  - `config/tw_institutions.csv`：欄位 `name_zh,domain`，涵蓋 115 學年 PDF 中的全部 60 所學校（校名字串需與 PDF 完全一致，如「國立臺灣大學」）；`domain` 對應 Hipo 的網域。
+  - `config/tw_institutions.csv`：欄位 `name_zh,name_en,domain`，涵蓋 115 學年 PDF 中的全部 60 所學校（校名字串需與 PDF 完全一致，如「國立臺灣大學」）；`domain` 是該校目前的主網域（如 `ntu.edu.tw`）。Hipo 清單過時且缺少數所學校（如康寧、佛光、馬偕、金門），因此不以 Hipo 為準。
   - `config/uac_years.yaml`：清單，每項 `roc_year`、`url`。初始三筆：115 → `https://www2.uac.edu.tw/115data/115_result_school_data.pdf`；114、113 的網址由建置者到 `https://www.uac.edu.tw/` 查「各系組最低錄取標準及錄取人數一覽表」填入。
-  - `uac.UacJob(client=None, years: list[int] | None = None)`，`name = "uac"`。對每個年度：下載 PDF 到暫存、`parse_uac_pdf`、對每列：依 CSV 把 `school_zh` 對到 `institution.id` 並回填 `institution.name_zh`；以 `(institution_id, name_zh=program_zh)` upsert `program`；以 `(program_id, year=roc_year+1911, pathway='tw_distribution')` upsert `admission_stat`（`subjects` 存為 `[{"subject":"國","weight":1.5},…]`）。回傳寫入的 `admission_stat` 筆數。
+  - `uac.UacJob(client=None, years: list[int] | None = None)`，`name = "uac"`。對每個年度：下載 PDF 到暫存、`parse_uac_pdf`、對每列：依 CSV 取得該校的 `name_en` 與 `domain`，以 `(country_code='TW', domain)` 查 `institution`；找不到就新增一筆（`name_en`、`name_zh` 來自 CSV，`web_url='https://www.<domain>/'`，`source_id`=uac，`source_url`=該年 PDF 網址）；找到就回填 `name_zh`；以 `(institution_id, name_zh=program_zh)` upsert `program`；以 `(program_id, year=roc_year+1911, pathway='tw_distribution')` upsert `admission_stat`（`subjects` 存為 `[{"subject":"國","weight":1.5},…]`）。回傳寫入的 `admission_stat` 筆數。
   - 任何校名在 CSV 找不到 → 丟 `UnknownSchoolError(missing: list[str])`，訊息列出全部缺少的校名。
 
 - [ ] **Step 1: 建 `tw_institutions.csv`**
 
-從 Task 5 Step 6 的完整 PDF 列出 60 個校名，逐一對到 Hipo 的網域。檢查：`uv run python -c` 讀 CSV 與 PDF，確認 PDF 的校名集合 ⊆ CSV 的校名集合。
+從 Task 5 Step 6 的完整 PDF 列出 60 個校名，填入英文校名與目前主網域。檢查：`uv run python -c` 讀 CSV 與 PDF，確認 PDF 的校名集合 ⊆ CSV 的校名集合，且 domain 無重複。
 
 - [ ] **Step 2: 寫測試**
 
@@ -418,6 +418,13 @@ def test_writes_programs_and_stats(db, httpx_mock):
     assert row[:6] == ("國立臺灣大學", "中國文學系", 2026, "tw_distribution", 265.5, 19)
     assert row[6][0] == {"subject": "國", "weight": 1.5} and row[7] == "國 50"
 
+def test_creates_institution_missing_from_hipo(db, httpx_mock):
+    # 不先 _seed：institution 表為空，Job 須自行建立學校
+    httpx_mock.add_response(url="https://www2.uac.edu.tw/115data/115_result_school_data.pdf", content=PDF)
+    assert run_job(UacJob(client=httpx.Client(), years=[115]), db).status == "success"
+    row = db.execute("select name_en, name_zh, country_code, web_url from institution where domain='ntu.edu.tw'").fetchone()
+    assert row == ("National Taiwan University", "國立臺灣大學", "TW", "https://www.ntu.edu.tw/")
+
 def test_rerun_is_idempotent(db, httpx_mock):
     _seed(db)
     httpx_mock.add_response(url="https://www2.uac.edu.tw/115data/115_result_school_data.pdf", content=PDF, is_reusable=True)
@@ -439,12 +446,12 @@ def test_unknown_school_fails_loudly(db, httpx_mock, tmp_path, monkeypatch):
 Run: `cd pipeline && uv run pytest tests/test_uac_job.py -v`
 Expected: FAIL，模組不存在
 
-- [ ] **Step 4: 實作 `jobs/uac.py`（含 `load_school_map() -> dict[str, str]` 讀 CSV）並登錄 `"uac"`**
+- [ ] **Step 4: 實作 `jobs/uac.py`（含 `load_school_map() -> dict[str, tuple[str, str]]`，key 為 `name_zh`、value 為 `(name_en, domain)`，讀 CSV）並登錄 `"uac"`**
 
 - [ ] **Step 5: 執行測試確認通過**
 
 Run: `cd pipeline && uv run pytest tests/test_uac_job.py -v`
-Expected: 3 PASS
+Expected: 4 PASS
 
 - [ ] **Step 6: 對本機資料庫實跑 115 年**
 
