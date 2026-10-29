@@ -1,0 +1,12 @@
+hipo:
+  name: Hipo university-domains-list
+  url: https://github.com/Hipo/university-domains-list
+  license: MIT
+uac:
+  name: 大學考試入學分發委員會
+  url: https://www.uac.edu.tw/
+  license: 公開資料（政府資訊）
+openalex:
+  name: OpenAlex
+  url: https://openalex.org/
+  license: CC0
