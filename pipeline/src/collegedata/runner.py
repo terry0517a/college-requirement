@@ -59,3 +59,12 @@ def run_job(job: Job, conn) -> FetchResult:
         (result.status, result.rows_written, result.error, log_id),
     )
     return result
+
+
+def _register_jobs() -> None:
+    from collegedata.jobs.hipo import HipoJob
+
+    REGISTRY["hipo"] = lambda: HipoJob()
+
+
+_register_jobs()
