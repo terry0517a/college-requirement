@@ -29,3 +29,5 @@ def test_query_includes_country_filter_and_key(db, httpx_mock):
     upsert_institutions(db, HIPO, ensure_source(db, "hipo"), "http://x")
     httpx_mock.add_response(url=re.compile(r"^(?=.*country_code(?::|%3A)TW)(?=.*api_key=k1).*$"), json=NTU)
     assert run_job(OpenAlexJob(client=httpx.Client(), api_key="k1"), db).status == "success"
+    urls = [x[0] for x in db.execute("select source_url from strength").fetchall()]
+    assert urls and all("api_key" not in u and "search=" in u and "country_code" in u for u in urls)

@@ -67,7 +67,7 @@ class OpenAlexJob:
             if not results or (results[0].get("works_count") or 0) < MIN_WORKS:
                 log.warning("OpenAlex: no confident match for %s", name_en)
             else:
-                total += self._write(conn, inst_id, results[0], source_id, str(resp.request.url))
+                total += self._write(conn, inst_id, results[0], source_id, str(resp.request.url.copy_remove_param("api_key")))
             if i < len(rows) - 1:
                 time.sleep(1)
         return total
