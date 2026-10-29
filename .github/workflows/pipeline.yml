@@ -23,6 +23,10 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
+    concurrency:
+      group: pipeline
+      cancel-in-progress: false
     steps:
       - name: Resolve job name
         id: job
@@ -71,7 +75,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: `[pipeline] ${job} failed on ${date}`,
-              body: `The scheduled pipeline job \`${job}\` failed.\n\nRun: ${process.env.RUN_URL}`,
+              body: `The pipeline job \`${job}\` failed (job name: ${job}, trigger: ${context.eventName}).\n\nRun: ${process.env.RUN_URL}`,
               assignees: [context.repo.owner],
               labels: ['pipeline-failure'],
             });
