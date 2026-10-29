@@ -1,0 +1,77 @@
+name: pipeline
+
+on:
+  schedule:
+    - cron: "0 3 1 * *"
+    - cron: "0 4 1 */3 *"
+    - cron: "0 5 20 8 *"
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Pipeline job to run"
+        type: choice
+        required: true
+        options:
+          - hipo
+          - uac
+          - openalex
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve job name
+        id: job
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          INPUT_JOB: ${{ github.event.inputs.job }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            JOB="$INPUT_JOB"
+          else
+            case "$SCHEDULE" in
+              "0 3 1 * *") JOB=hipo ;;
+              "0 4 1 */3 *") JOB=openalex ;;
+              "0 5 20 8 *") JOB=uac ;;
+              *) echo "Unknown schedule: $SCHEDULE" >&2; exit 1 ;;
+            esac
+          fi
+          echo "job=$JOB" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+      - name: Install dependencies
+        working-directory: pipeline
+        run: uv sync
+      - name: Run pipeline job
+        working-directory: pipeline
+        env:
+          JOB: ${{ steps.job.outputs.job }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          OPENALEX_API_KEY: ${{ secrets.OPENALEX_API_KEY }}
+        run: uv run collegedata run "$JOB"
+      - name: Open issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        env:
+          JOB: ${{ steps.job.outputs.job }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          script: |
+            const job = process.env.JOB || 'unknown';
+            const date = new Date().toISOString().slice(0, 10);
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[pipeline] ${job} failed on ${date}`,
+              body: `The scheduled pipeline job \`${job}\` failed.\n\nRun: ${process.env.RUN_URL}`,
+              assignees: [context.repo.owner],
+              labels: ['pipeline-failure'],
+            });
