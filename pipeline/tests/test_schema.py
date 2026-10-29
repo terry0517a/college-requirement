@@ -11,19 +11,21 @@ def test_institution_requires_source(db):
     with pytest.raises(psycopg.errors.NotNullViolation):
         db.execute("insert into institution(country_code,name_en,domain) values ('TW','X','x.edu.tw')")
 
-TABLES = ["source", "institution", "program", "admission_stat", "admission_requirement",
-          "cost", "strength", "fetch_log"]
+def _public_tables(db):
+    return {r[0] for r in db.execute("select tablename from pg_tables where schemaname='public'")}
 
 def test_rls_enabled_on_every_table(db):
-    rows = dict(db.execute("select relname, relrowsecurity from pg_class where relname = any(%s) and relkind='r'",
-                           (TABLES,)).fetchall())
-    assert rows == {t: True for t in TABLES}
+    rows = dict(db.execute("""select c.relname, c.relrowsecurity from pg_class c
+                              join pg_namespace n on n.oid = c.relnamespace
+                              where n.nspname = 'public' and c.relkind = 'r'""").fetchall())
+    assert set(rows) == _public_tables(db) and {"institution_stat", "field", "fetch_log"} <= set(rows)
+    assert rows == {t: True for t in rows}
 
 def test_anon_read_policies(db):
     pol = {r[0]: r[1:] for r in db.execute("select tablename, policyname, cmd, roles from pg_policies where schemaname='public'")}
     assert "fetch_log" not in pol
-    for t in TABLES[:-1]:
-        assert pol[t] == (f"{t}_anon_read", "SELECT", ["anon"])
+    for t in _public_tables(db) - {"fetch_log"}:
+        assert pol.get(t) == (f"{t}_anon_read", "SELECT", ["anon"]), t
 
 def test_openalex_id_unique(db):
     sid = db.execute("insert into source(code,name,url) values('s','s','u') returning id").fetchone()[0]
