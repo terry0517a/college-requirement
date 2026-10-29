@@ -19,6 +19,14 @@ TIEBREAK = "同級分超額篩選"
 log = logging.getLogger(__name__)
 
 
+class UnitQualityError(ValueError):
+    """The parse was unusable; carries rows_skipped for the cac_fetch diagnostic."""
+
+    def __init__(self, msg: str, rows_skipped: int = 0):
+        super().__init__(msg)
+        self.rows_skipped = rows_skipped
+
+
 def target_years(today: datetime.date) -> list[int]:
     cur = today.year - 1911 if today >= datetime.date(today.year, 5, 1) else today.year - 1912
     return [cur, cur - 1, cur - 2]
@@ -78,6 +86,9 @@ class CacSieveJob:
             try:
                 resp = self.fetcher.get(list_url)
             except BusyError:
+                if succeeded == 0:
+                    raise
+                log.warning("CAC sieve: busy fetching %s; stopping with %d schools done", list_url, succeeded)
                 break
             if resp.status_code == 404 and i > 0:
                 log.warning("CAC sieve: %s returned 404 for ROC year %s; skipping", list_url, roc)
@@ -86,22 +97,31 @@ class CacSieveJob:
             done = done_units(conn, self.name, roc)
             units = [(c, n) for c, n in parse_college_list(resp.text) if c not in done]
             for code, school_zh in units:
-                if budget.exhausted(processed, self.fetcher._clock):
+                if budget.exhausted(processed):
                     break
                 attempted += 1
                 url = image_url(roc, code)
+                cache_before = dict(cache)
                 try:
                     with conn.transaction():
                         n, skipped = self._process(conn, roc, code, school_zh, url, school_map, cache, source_id)
                         record_unit(conn, self.name, roc, code, url, "done", n, skipped, None)
                 except BusyError:
+                    cache.clear()
+                    cache.update(cache_before)
+                    if succeeded == 0:
+                        raise
+                    log.warning("CAC sieve: busy at %s/%s; stopping with %d schools done", roc, code, succeeded)
                     busy = True
                     break
                 except UnknownSchoolError:
                     raise
                 except Exception as e:  # noqa: BLE001 - recorded per unit
+                    # The savepoint rolled back any institution inserted for this unit.
+                    cache.clear()
+                    cache.update(cache_before)
                     log.warning("CAC sieve %s/%s failed: %s: %s", roc, code, type(e).__name__, e)
-                    record_unit(conn, self.name, roc, code, url, "failed", 0, 0, f"{type(e).__name__}: {e}")
+                    record_unit(conn, self.name, roc, code, url, "failed", 0, getattr(e, "rows_skipped", 0), f"{type(e).__name__}: {e}")
                 else:
                     succeeded += 1
                     written += n
@@ -118,7 +138,9 @@ class CacSieveJob:
             log.warning("CAC sieve %s/%s: %s", roc, code, w)
         total = len(res.rows) + res.rows_skipped
         if total and res.rows_skipped / total > MAX_SKIP_RATIO:
-            raise ValueError(f"{res.rows_skipped}/{total} rows skipped")
+            raise UnitQualityError(f"{res.rows_skipped}/{total} rows skipped", res.rows_skipped)
+        if total == 0:
+            raise UnitQualityError("no rows parsed")
         if res.rows and school_zh not in school_map:
             raise UnknownSchoolError([school_zh])
         year = roc + 1911

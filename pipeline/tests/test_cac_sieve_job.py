@@ -1,7 +1,7 @@
 # tests/test_cac_sieve_job.py
 import datetime, pathlib
 from decimal import Decimal
-import httpx, pytest
+import httpx
 from collegedata.cac_http import CacFetcher
 from collegedata.parsers.cac_sieve import SieveRow, SieveLevel, SieveParseResult
 from collegedata.jobs.cac_sieve import CacSieveJob, target_years, parse_college_list, college_list_url, image_url
@@ -29,10 +29,10 @@ def _clock():
     def sleep(s): t[0] += s
     return now, sleep
 
-def _job(years_html=None, **kw):
+def _job(**kw):
     now, sleep = _clock()
     f = CacFetcher(httpx.Client(), min_interval=0, sleep=sleep, clock=now)
-    return CacSieveJob(today=TODAY, parse=kw.pop("parse", fake_parse), fetcher=f, budget=Budget(max_schools=kw.pop("max_schools", 10), time_budget=datetime.timedelta(minutes=75), started=0.0), **kw)
+    return CacSieveJob(today=TODAY, parse=kw.pop("parse", fake_parse), fetcher=f, budget=Budget(max_schools=kw.pop("max_schools", 10), time_budget=datetime.timedelta(minutes=75), started=0.0, clock=now), **kw)
 
 def _mock_year(httpx_mock, roc, html=LIST, pngs=("001",)):
     httpx_mock.add_response(url=college_list_url(roc), text=html, is_reusable=True)
@@ -147,3 +147,61 @@ def test_budget_exhausted_by_count_or_time():
     assert not b.exhausted(1, lambda: 59.0)
     assert b.exhausted(2, lambda: 0.0)
     assert b.exhausted(0, lambda: 60.0)
+
+
+def _list_html(*codes):
+    return "".join(f'<a href="report/{c}.htm">({c})國立臺灣大學</a>' for c in codes)
+
+
+def test_failed_unit_does_not_poison_institution_cache(db, httpx_mock):
+    calls = []
+    def flaky(png, school_code, ocr=None):
+        calls.append(school_code)
+        if len(calls) == 1:
+            bad = _row("001012", "中國文學系")
+            bad.extra = {"x": object()}   # not JSON serialisable: fails after institution/program were written
+            return SieveParseResult([bad], 0, [], ["一般校系"])
+        return fake_parse(png, school_code)
+    httpx_mock.add_response(url=college_list_url(115), text=_list_html("001"))
+    httpx_mock.add_response(url=college_list_url(114), text=_list_html("001"))
+    httpx_mock.add_response(url=college_list_url(113), status_code=404)
+    for roc in (115, 114):
+        httpx_mock.add_response(url=image_url(roc, "001"), content=b"png")
+    r = run_job(_job(max_schools=5, parse=flaky), db)
+    assert r.status == "success" and r.rows_written == 3
+    got = db.execute("select roc_year, status from cac_fetch order by roc_year desc").fetchall()
+    assert got == [(115, "failed"), (114, "done")]
+
+
+def test_busy_before_any_success_fails_job(db, httpx_mock):
+    httpx_mock.add_response(url=college_list_url(115), status_code=503, is_reusable=True)
+    r = run_job(_job(), db)
+    assert r.status == "failed" and "BusyError" in r.error
+
+
+def test_busy_on_first_unit_fails_job(db, httpx_mock):
+    httpx_mock.add_response(url=college_list_url(115), text=LIST, is_reusable=True)
+    httpx_mock.add_response(url=image_url(115, "001"), status_code=503, is_reusable=True)
+    r = run_job(_job(), db)
+    assert r.status == "failed" and "BusyError" in r.error
+
+
+def test_failed_unit_records_rows_skipped(db, httpx_mock):
+    def skippy(png, school_code, ocr=None):
+        if school_code != "001": return fake_parse(png, school_code)
+        return SieveParseResult([_row("001012", "中國文學系")], 1, [], ["一般校系"])
+    _mock_year(httpx_mock, 115, pngs=("001", "002"))
+    for roc in (114, 113): httpx_mock.add_response(url=college_list_url(roc), status_code=404, is_reusable=True)
+    run_job(_job(max_schools=2, parse=skippy), db)
+    assert db.execute("select status, rows_written, rows_skipped from cac_fetch where school_code='001'").fetchone() == ("failed", 0, 1)
+
+
+def test_zero_rows_parsed_is_failed_not_done(db, httpx_mock):
+    def empty(png, school_code, ocr=None):
+        if school_code != "001": return fake_parse(png, school_code)
+        return SieveParseResult([], 0, [], [])
+    _mock_year(httpx_mock, 115, pngs=("001", "002"))
+    for roc in (114, 113): httpx_mock.add_response(url=college_list_url(roc), status_code=404, is_reusable=True)
+    r = run_job(_job(max_schools=2, parse=empty), db)
+    assert r.status == "success"
+    assert db.execute("select status, error from cac_fetch where school_code='001'").fetchone() == ("failed", "UnitQualityError: no rows parsed")

@@ -3,6 +3,7 @@ import os
 import time
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Callable
 
 from psycopg.types.json import Jsonb
 
@@ -16,16 +17,18 @@ class Budget:
     max_schools: int
     time_budget: timedelta
     started: float
+    clock: Callable[[], float] = time.monotonic
 
     @classmethod
     def from_env(cls, clock=time.monotonic) -> "Budget":
         # Empty strings (unset GitHub Actions inputs) count as unset.
         max_schools = int(os.environ.get("CAC_MAX_SCHOOLS") or DEFAULT_MAX_SCHOOLS)
         minutes = float(os.environ.get("CAC_TIME_BUDGET_MINUTES") or DEFAULT_TIME_BUDGET_MINUTES)
-        return cls(max_schools, timedelta(minutes=minutes), clock())
+        return cls(max_schools, timedelta(minutes=minutes), clock(), clock)
 
-    def exhausted(self, done_count: int, clock=time.monotonic) -> bool:
-        return done_count >= self.max_schools or clock() - self.started >= self.time_budget.total_seconds()
+    def exhausted(self, done_count: int, clock=None) -> bool:
+        now = (clock or self.clock)()
+        return done_count >= self.max_schools or now - self.started >= self.time_budget.total_seconds()
 
 
 def done_units(conn, job: str, roc_year: int) -> set[str]:
