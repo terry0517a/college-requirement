@@ -446,7 +446,6 @@ def _parse_table(gray: np.ndarray, table: Table, rows: list[tuple[int, int, bool
     group = _group_name(gray, table.above, ocr, result.warnings)
     header_texts = [""] * len(cols)
     n_header = 0
-    mapping = None
     for y0, y1 in trows[:_MAX_HEADER_ROWS]:
         first = _ocr_cell(gray, y0, y1, *cols[0], ocr, result.warnings)
         if re.search(r"\d", first):  # a data row (possibly with a misread code)
@@ -455,9 +454,7 @@ def _parse_table(gray: np.ndarray, table: Table, rows: list[tuple[int, int, bool
         for i, (x0, x1) in enumerate(cols[1:], 1):
             header_texts[i] += _ocr_cell(gray, y0, y1, x0, x1, ocr, result.warnings)
         n_header += 1
-        mapping = map_headers(header_texts)
-        if mapping is not None:
-            break
+    mapping = map_headers(header_texts)
     if mapping is None:
         result.warnings.append(f"skip table: unrecognised headers {header_texts}")
         return

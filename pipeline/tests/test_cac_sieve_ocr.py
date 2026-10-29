@@ -154,3 +154,12 @@ def test_real_engine_survives_very_wide_line():
     line = np.full((16, 2100), 255, dtype=np.uint8)
     line[:, 10:2000:7] = 0
     assert isinstance(RapidOcrEngine().recognize(line), str)
+
+
+def test_two_row_header_with_base_columns_on_first_row():
+    row1 = ["校系代碼", "性別要求", "校系名稱", "招生名額", "", "篩選順序一"]
+    row2 = ["", "", "", "", "國文", ""]
+    ocr = FakeOcr()
+    png = make_table(ocr, [row1, row2, ["001012", "無", "中國文學系", "23", "前標", "社會10"]])
+    res = parse_sieve_image(png, "001", ocr=ocr)
+    assert res.rows_skipped == 0 and res.rows[0].thresholds["國文"] == "前標"
