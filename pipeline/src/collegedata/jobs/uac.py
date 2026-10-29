@@ -100,7 +100,7 @@ class UacJob:
                     """insert into program (institution_id, name_zh, name_en, source_id, source_url, fetched_at)
                        values (%s, %s, NULL, %s, %s, now())
                        on conflict (institution_id, name_zh) do update set
-                           name_en = NULL, source_id = excluded.source_id,
+                           source_id = excluded.source_id,
                            source_url = excluded.source_url, fetched_at = excluded.fetched_at
                        returning id""",
                     (inst_id, r.program_zh, source_id, url),

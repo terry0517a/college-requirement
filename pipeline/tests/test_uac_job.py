@@ -72,3 +72,11 @@ def test_404_on_older_year_is_skipped(db, httpx_mock, monkeypatch):
     assert r.status == "success" and r.rows_written > 0
     years = {x[0] for x in db.execute("select distinct year from admission_stat")}
     assert years == {2026, 2024}
+
+def test_rerun_keeps_program_name_en(db, httpx_mock):
+    _seed(db)
+    httpx_mock.add_response(url=U.format(115), content=PDF, is_reusable=True)
+    run_job(UacJob(client=httpx.Client(), years=[115], today=TODAY), db)
+    db.execute("update program set name_en = 'Chinese Literature' where name_zh = '中國文學系'")
+    run_job(UacJob(client=httpx.Client(), years=[115], today=TODAY), db)
+    assert db.execute("select name_en from program where name_zh = '中國文學系'").fetchone()[0] == "Chinese Literature"
