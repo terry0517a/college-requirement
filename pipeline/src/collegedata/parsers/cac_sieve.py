@@ -6,6 +6,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from typing import Protocol
 
 import numpy as np
 from PIL import Image
@@ -15,7 +16,7 @@ INK_DARK = 110    # gray below this counts as text ink
 
 _SIMPLIFIED = {
     "数": "數", "国": "國", "测": "測", "筛": "篩", "顺": "順", "标": "標", "级": "級",
-    "额": "額", "顶": "頂", "会": "會", "听": "聽", "学": "學", "组": "組",
+    "额": "額", "别": "別", "顶": "頂", "会": "會", "听": "聽", "学": "學", "组": "組",
 }
 _TRANS = str.maketrans({**_SIMPLIFIED, "（": "(", "）": ")"})
 _MISSING = {"", "--", "-", "—", "－－", "－"}
@@ -125,9 +126,11 @@ def normalize_text(s: str) -> str:
 
 def parse_level(s: str) -> str | None:
     t = normalize_text(s)
-    if t in _MISSING or t[0] not in "頂前均後底":
+    if t in _MISSING:
         return None
-    return t[0] + "標"
+    # noise may precede the level (丁頂標), and 標 itself is often misread: key on the level character
+    first = next((c for c in t if c in "頂前均後底"), None)
+    return first + "標" if first else None
 
 
 def parse_listening(s: str) -> str | None:
@@ -137,14 +140,14 @@ def parse_listening(s: str) -> str | None:
 
 def parse_multiplier(s: str) -> Decimal | None:
     try:
-        d = Decimal(normalize_text(s))
+        d = Decimal(normalize_text(s).rstrip("."))  # a trailing "." is border noise
     except InvalidOperation:
         return None
     return d if d.is_finite() else None
 
 
 def parse_quota(s: str) -> int:
-    return int(normalize_text(s))
+    return int(normalize_text(s).rstrip("."))
 
 
 @dataclass
@@ -199,3 +202,227 @@ def normalize_program_name(name: str, gender: str | None) -> str:
     n = re.sub(r"\s+", "", unicodedata.normalize("NFKC", name))  # NFKC also maps （） to ()
     g = normalize_text(gender or "")
     return f"{n}({g})" if g in ("男", "女") else n
+
+
+# ------------------------------------------------------------------------ OCR
+
+class OcrEngine(Protocol):
+    def recognize(self, line: np.ndarray) -> str: ...
+
+
+class RapidOcrEngine:
+    """Per-line recognition only (use_det=False); whole-image detection misreads this table."""
+
+    TARGET_HEIGHT = 40
+
+    def __init__(self) -> None:
+        from rapidocr_onnxruntime import RapidOCR  # lazy: model load is slow
+
+        self._engine = RapidOCR()
+
+    def recognize(self, line: np.ndarray) -> str:
+        h = line.shape[0]
+        if h < self.TARGET_HEIGHT:
+            w = max(1, round(line.shape[1] * self.TARGET_HEIGHT / h))
+            line = np.asarray(Image.fromarray(line).resize((w, self.TARGET_HEIGHT), Image.LANCZOS))
+        img = np.ascontiguousarray(np.stack([line] * 3, axis=-1))
+        result, _ = self._engine(img, use_det=False, use_cls=False)
+        if not result:
+            return ""
+        first = result[0]
+        return str(first[0] if len(first) == 2 else first[1])
+
+
+# -------------------------------------------------------------- header mapping
+
+_SUBJECT_HEADERS = ("國文", "英文", "數學A", "數學B", "社會", "自然", "英聽")
+KNOWN_HEADERS: dict[str, str] = {
+    "校系代碼": "code", "性別要求": "gender", "校系名稱": "name", "招生名額": "quota",
+    **{h: h for h in _SUBJECT_HEADERS},
+    "學測科目組合": "學測科目組合",
+    **{f"篩選順序{n}": f"sieve{i}" for i, n in enumerate("一二三四五六", 1)},
+    "同級分超額篩選": "overflow",
+}
+# merged header cells are cut by the column grid, so labels often arrive truncated
+_HEADER_ALIASES = {
+    "校系名": "name", "招生名": "quota", "超額": "overflow", "可力超": "overflow",
+    **{f"順序{n}": f"sieve{i}" for i, n in enumerate("一二三四五六", 1)},
+}
+_HEADER_KEYS = sorted(KNOWN_HEADERS, key=len, reverse=True)
+_ALIAS_KEYS = sorted(_HEADER_ALIASES, key=len, reverse=True)
+_BASE_KEYS = ("code", "gender", "name", "quota", "overflow")
+THRESHOLD_KEYS = ("國文", "英文", "數學A", "數學B", "社會", "自然", "英聽")
+MULTIPLIER_KEYS = ("國文", "英文", "數學A", "數學B", "社會", "自然", "學測科目組合")
+
+
+def map_headers(header_texts: list[str]) -> dict[int, tuple[str, str]] | None:
+    seen: set[str] = set()
+    mapping: dict[int, tuple[str, str]] = {}
+    for i, raw in enumerate(header_texts):
+        text = normalize_text(raw)
+        key = next((KNOWN_HEADERS[k] for k in _HEADER_KEYS if k in text), None)
+        if key is None:
+            key = next((_HEADER_ALIASES[k] for k in _ALIAS_KEYS if k in text), None)
+        if key is None and text == "英":  # 英聽 header is cut to its first character
+            key = "英聽"
+        if key is None or "APCS" in text.upper():  # APCS columns stack several values per cell
+            mapping[i] = ("extra", text)
+        elif key in _BASE_KEYS:
+            mapping[i] = ("base", key)
+        elif key.startswith("sieve"):
+            mapping[i] = ("sieve", key)
+        elif key == "學測科目組合":
+            mapping[i] = ("multipliers", key)
+        elif key in seen and key != "英聽":
+            mapping[i] = ("multipliers", key)
+        else:
+            seen.add(key)
+            mapping[i] = ("thresholds", key)
+    present = {k for block, k in mapping.values() if block == "base"}
+    if not {"code", "name", "quota"} <= present:
+        return None
+    return mapping
+
+
+# ------------------------------------------------------------------ row parsing
+
+@dataclass
+class SieveRow:
+    school_code: str
+    cac_code: str
+    gender: str | None
+    name: str
+    quota: int
+    group: str
+    thresholds: dict[str, str | None]
+    multipliers: dict[str, Decimal | None]
+    extra: dict[str, str]
+    sieve: list[SieveLevel]
+    overflow_tiebreak: bool
+    raw_cells: list[str]
+
+
+@dataclass
+class SieveParseResult:
+    rows: list[SieveRow]
+    rows_skipped: int
+    warnings: list[str]
+    groups: list[str]
+
+
+_DEFAULT_GROUP = "一般校系"
+_NO_GENDER = {"", "無", "浦"}  # the stylised 無 is consistently read as 浦
+_STARS = {"*", "＊", "水", "米", "×", "x"}  # the small asterisk is consistently read as 水
+_MAX_HEADER_ROWS = 3
+
+
+def _ocr_cell(gray: np.ndarray, y0: int, y1: int, x0: int, x1: int, ocr: OcrEngine) -> str:
+    return normalize_text("".join(ocr.recognize(ln) for ln in cell_lines(gray, y0, y1, x0, x1)))
+
+
+def _group_name(gray: np.ndarray, above: tuple[int, int] | None, ocr: OcrEngine) -> str:
+    if above is None:
+        return _DEFAULT_GROUP
+    lines = cell_lines(gray, above[0], above[1], 0, gray.shape[1])
+    if not lines:
+        return _DEFAULT_GROUP
+    text = normalize_text(ocr.recognize(lines[-1]))  # the marker is the line right above the table
+    m = re.search(r"[【\[]([^】\]]+)", text)
+    return m.group(1) if m else _DEFAULT_GROUP
+
+
+def _repair_name(name: str) -> str:
+    # the OCR model cannot read 戲 and drops it
+    return "戲" + name if name.startswith("劇學系") else name
+
+
+def _is_missing(text: str) -> bool:
+    return text in _MISSING
+
+
+def _build_row(cells: list[str], mapping: dict[int, tuple[str, str]], school_code: str,
+               group: str) -> SieveRow:
+    """Raise ValueError when the cells do not form a valid row."""
+    base: dict[str, str] = {}
+    thresholds: dict[str, str | None] = dict.fromkeys(THRESHOLD_KEYS)
+    multipliers: dict[str, Decimal | None] = dict.fromkeys(MULTIPLIER_KEYS)
+    extra: dict[str, str] = {}
+    sieve_cells: dict[str, str] = {}
+    for i, text in enumerate(cells):
+        block, key = mapping.get(i, ("extra", ""))
+        if block == "base":
+            base[key] = text
+        elif block == "sieve":
+            sieve_cells[key] = text
+        elif block == "extra":
+            extra[key] = text
+        elif block == "thresholds":
+            value = parse_listening(text) if key == "英聽" else (parse_level(text) if text else None)
+            if text and not _is_missing(text) and value is None:
+                raise ValueError(f"bad {key} {text!r}")
+            thresholds[key] = value
+        else:
+            value = parse_multiplier(text) if text else None
+            if text and not _is_missing(text) and value is None:
+                raise ValueError(f"bad multiplier {text!r}")
+            multipliers[key] = value
+    code = base.get("code", "")
+    if not re.fullmatch(r"\d{6}", code) or code[:3] != school_code:
+        raise ValueError(f"bad code {code!r}")
+    gender = base.get("gender", "")
+    if gender not in _NO_GENDER and gender not in ("男", "女"):
+        raise ValueError(f"bad gender {gender!r}")
+    gender = gender if gender in ("男", "女") else None
+    if not base.get("name"):
+        raise ValueError("empty name")
+    quota = parse_quota(base["quota"])
+    levels = []
+    for key in (f"sieve{n}" for n in range(1, 7)):
+        level = parse_sieve_cell(sieve_cells.get(key, ""))
+        if level is not None:
+            level.order = len(levels) + 1
+            levels.append(level)
+    return SieveRow(
+        school_code=school_code, cac_code=code, gender=gender,
+        name=normalize_program_name(_repair_name(base["name"]), gender), quota=quota, group=group,
+        thresholds=thresholds, multipliers=multipliers, extra=extra, sieve=levels,
+        overflow_tiebreak=base.get("overflow", "") in _STARS, raw_cells=cells,
+    )
+
+
+def _parse_table(gray: np.ndarray, table: Table, rows: list[tuple[int, int, bool]],
+                 school_code: str, ocr: OcrEngine, result: SieveParseResult) -> None:
+    xs = detect_vlines(gray, table.y0, table.y1)
+    cols = list(zip(xs, xs[1:]))
+    trows = [(y0, y1) for y0, y1, g in rows if g and y0 >= table.y0 and y1 <= table.y1]
+    group = _group_name(gray, table.above, ocr)
+    header_texts = [""] * len(cols)
+    n_header = 0
+    for y0, y1 in trows[:_MAX_HEADER_ROWS]:
+        if re.fullmatch(r"\d{6}", _ocr_cell(gray, y0, y1, *cols[0], ocr)):
+            break
+        for i, (x0, x1) in enumerate(cols):
+            header_texts[i] += _ocr_cell(gray, y0, y1, x0, x1, ocr)
+        n_header += 1
+    mapping = map_headers(header_texts)
+    if mapping is None:
+        result.warnings.append(f"skip table: unrecognised headers {header_texts}")
+        return
+    result.groups.append(group)
+    for y0, y1 in trows[n_header:]:
+        cells = [_ocr_cell(gray, y0, y1, x0, x1, ocr) for x0, x1 in cols]
+        try:
+            result.rows.append(_build_row(cells, mapping, school_code, group))
+        except ValueError:
+            result.rows_skipped += 1
+            result.warnings.append(f"skip row: {cells}")
+
+
+def parse_sieve_image(png: bytes, school_code: str, ocr: OcrEngine | None = None) -> SieveParseResult:
+    ocr = ocr or RapidOcrEngine()
+    gray = to_gray(png)
+    rows = grid_rows(gray, detect_hlines(gray))
+    result = SieveParseResult(rows=[], rows_skipped=0, warnings=[], groups=[])
+    for table in split_tables(rows):
+        _parse_table(gray, table, rows, school_code, ocr, result)
+    return result
