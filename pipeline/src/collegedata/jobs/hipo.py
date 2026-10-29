@@ -15,6 +15,7 @@ on conflict (country_code, domain) do update set
     source_id = excluded.source_id,
     source_url = excluded.source_url,
     fetched_at = excluded.fetched_at
+where institution.source_id = excluded.source_id
 """
 
 
