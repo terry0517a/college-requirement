@@ -168,6 +168,8 @@ _ABBREV = {
     "國": "國文", "英": "英文", "社": "社會", "自": "自然",
 }
 _TOKENS = sorted(_ABBREV, key=len, reverse=True)
+SUBJECT_NAMES = frozenset(_ABBREV.values())
+MAX_SUBJECT_SCORE = 15
 
 
 def expand_subjects(s: str) -> list[str]:
@@ -175,7 +177,8 @@ def expand_subjects(s: str) -> list[str]:
     if not t:
         return []
     if "+" in t:
-        return t.split("+")
+        parts = t.split("+")
+        return parts if all(p in SUBJECT_NAMES for p in parts) else []
     out: list[str] = []
     i = 0
     while i < len(t):
@@ -333,6 +336,8 @@ class SieveParseResult:
 
 
 _DEFAULT_GROUP = "一般校系"
+UNREADABLE = "?"
+CORE_SUBJECTS = ("國文", "英文", "數學A", "數學B", "社會", "自然")
 
 _MAX_HEADER_ROWS = 3
 
@@ -348,21 +353,26 @@ def _recognize(ocr: OcrEngine, line: np.ndarray, warnings: list[str]) -> str:
 def _ocr_cell(gray: np.ndarray, y0: int, y1: int, x0: int, x1: int, ocr: OcrEngine,
               warnings: list[str]) -> str:
     lines = cell_lines(gray, y0, y1, x0, x1)
-    return normalize_text("".join(_recognize(ocr, ln, warnings) for ln in lines))
+    text = normalize_text("".join(_recognize(ocr, ln, warnings) for ln in lines))
+    # ink the engine could not read must never pass as an empty cell ("no requirement")
+    return UNREADABLE if lines and not text else text
 
 
 def _group_name(gray: np.ndarray, above: tuple[int, int] | None, ocr: OcrEngine,
-                warnings: list[str]) -> str:
+                warnings: list[str], previous: str | None) -> str:
+    """The 【…】 marker right above the table; without one, a table continues the previous group."""
     lines = cell_lines(gray, above[0], above[1], 0, gray.shape[1]) if above else []
-    if not lines:
-        return _DEFAULT_GROUP
     # the marker is the line right above the table
-    text = normalize_text(_recognize(ocr, lines[-1], warnings))
+    text = normalize_text(_recognize(ocr, lines[-1], warnings)) if lines else ""
     m = re.search(r"[【\[]([^】\]]+)", text)
-    if not m:
+    if m:
+        return m.group(1)
+    if previous is not None:
+        warnings.append(f"no group marker above table ({text!r}), continuing {previous}")
+        return previous
+    if text:
         warnings.append(f"group marker not recognised ({text!r}), using {_DEFAULT_GROUP}")
-        return _DEFAULT_GROUP
-    return m.group(1)
+    return _DEFAULT_GROUP
 
 
 def _repair_name(name: str) -> str:
@@ -421,7 +431,7 @@ def _build_row(cells: list[str], mapping: dict[int, tuple[str, str]], school_cod
     if gender and gender not in OCR_CONFUSIONS["no_gender"] and gender not in ("男", "女"):
         raise ValueError(f"bad gender {gender!r}")
     gender = gender if gender in ("男", "女") else None
-    if not base.get("name"):
+    if base.get("name", "") in ("", UNREADABLE):
         raise ValueError("empty name")
     quota = parse_quota(base["quota"])
     levels = []
@@ -431,6 +441,8 @@ def _build_row(cells: list[str], mapping: dict[int, tuple[str, str]], school_cod
         if level is None and not _is_missing(text):
             raise ValueError(f"bad {key} {text!r}")
         if level is not None:
+            if level.subjects and level.min_score > MAX_SUBJECT_SCORE * len(level.subjects):
+                raise ValueError(f"{key} score above maximum: {text!r}")
             level.order = len(levels) + 1
             levels.append(level)
     return SieveRow(
@@ -441,12 +453,21 @@ def _build_row(cells: list[str], mapping: dict[int, tuple[str, str]], school_cod
     )
 
 
+def _missing_core(mapping: dict[int, tuple[str, str]]) -> list[str]:
+    """Core subjects absent from the thresholds or the multipliers block."""
+    present = set(mapping.values())
+    return [f"{block}.{s}" for block in ("thresholds", "multipliers") for s in CORE_SUBJECTS
+            if (block, s) not in present]
+
+
 def _parse_table(gray: np.ndarray, table: Table, rows: list[tuple[int, int, bool]],
-                 school_code: str, ocr: OcrEngine, result: SieveParseResult) -> None:
+                 school_code: str, ocr: OcrEngine, result: SieveParseResult,
+                 previous_group: str | None) -> str:
+    """Parse one table into result; return its group (the next table may continue it)."""
     xs = detect_vlines(gray, table.y0, table.y1)
     cols = list(zip(xs, xs[1:]))
     trows = [(y0, y1) for y0, y1, g in rows if g and y0 >= table.y0 and y1 <= table.y1]
-    group = _group_name(gray, table.above, ocr, result.warnings)
+    group = _group_name(gray, table.above, ocr, result.warnings, previous_group)
     header_texts = [""] * len(cols)
     n_header = 0
     for y0, y1 in trows[:_MAX_HEADER_ROWS]:
@@ -458,17 +479,23 @@ def _parse_table(gray: np.ndarray, table: Table, rows: list[tuple[int, int, bool
             header_texts[i] += _ocr_cell(gray, y0, y1, x0, x1, ocr, result.warnings)
         n_header += 1
     mapping = map_headers(header_texts)
-    if mapping is None:
-        result.warnings.append(f"skip table: unrecognised headers {header_texts}")
-        return
+    missing = _missing_core(mapping) if mapping is not None and group == _DEFAULT_GROUP else []
+    if mapping is None or missing:
+        # every data row of a skipped table counts as skipped, so the skip-ratio guard sees it
+        result.rows_skipped += len(trows) - n_header
+        reason = f"missing core subjects {missing}" if missing else "unrecognised headers"
+        result.warnings.append(f"skip table ({group}): {reason}: {header_texts}")
+        return group
     result.groups.append(group)
     for y0, y1 in trows[n_header:]:
         cells = [_ocr_cell(gray, y0, y1, x0, x1, ocr, result.warnings) for x0, x1 in cols]
+        log.debug("%s raw cells: %s", school_code, cells)
         try:
             result.rows.append(_build_row(cells, mapping, school_code, group))
         except ValueError:
             result.rows_skipped += 1
             result.warnings.append(f"skip row: {cells}")
+    return group
 
 
 def parse_sieve_image(png: bytes, school_code: str, ocr: OcrEngine | None = None) -> SieveParseResult:
@@ -476,6 +503,7 @@ def parse_sieve_image(png: bytes, school_code: str, ocr: OcrEngine | None = None
     gray = to_gray(png)
     rows = grid_rows(gray, detect_hlines(gray))
     result = SieveParseResult(rows=[], rows_skipped=0, warnings=[], groups=[])
+    group: str | None = None
     for table in split_tables(rows):
-        _parse_table(gray, table, rows, school_code, ocr, result)
+        group = _parse_table(gray, table, rows, school_code, ocr, result, group)
     return result

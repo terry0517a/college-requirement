@@ -58,46 +58,66 @@ from collegedata.parsers import cac_sieve
 from collegedata.parsers.cac_sieve import RapidOcrEngine
 
 COL_W, ROW_H = 160, 40
-HEADER = ["校系代碼", "性別要求", "校系名稱", "招生名額", "篩選順序一", "同級分超額篩選"]
+CORE = ["國文", "英文", "數學A", "數學B", "社會", "自然"]
+BASE = ["校系代碼", "性別要求", "校系名稱", "招生名額", "篩選順序一", "同級分超額篩選"]
+HEADER = BASE + CORE + CORE   # 一般校系 tables must carry the six core subjects as thresholds and multipliers
 
 
 class FakeOcr:
     """Identifies a cell by the width of its ink block, so each distinct text gets its own width."""
 
-    def __init__(self):
+    def __init__(self, blank=()):
         self.widths: dict[str, int] = {}
+        self.blank = set(blank)   # texts whose ink the engine cannot read
 
     def width_for(self, text: str) -> int:
         return self.widths.setdefault(text, 20 + 3 * len(self.widths))
 
     def recognize(self, line):
         w = int((line < 110).any(axis=0).sum())
-        return next(t for t, x in self.widths.items() if x == w)
+        text = next(t for t, x in self.widths.items() if x == w)
+        return "" if text in self.blank else text
 
 
-def make_table(ocr: FakeOcr, rows: list[list[str]]) -> bytes:
-    ncol, nrow = len(rows[0]), len(rows)
-    img = Image.new("L", (ncol * COL_W + 20, nrow * ROW_H + 60), 255)
+def make_tables(ocr: FakeOcr, tables: list[tuple[str | None, list[list[str]]]]) -> bytes:
+    """Stack tables vertically; each may have a text line (its group marker) in the gap above it."""
+    ncol = max(len(rows[0]) for _, rows in tables)
+    height = 20 + sum(30 + len(rows) * ROW_H for _, rows in tables) + 40
+    img = Image.new("L", (ncol * COL_W + 20, height), 255)
     d = ImageDraw.Draw(img)
-    for r in range(nrow + 1):
-        y = 20 + r * ROW_H
-        d.line([(10, y), (10 + ncol * COL_W, y)], fill=0, width=2)
-    for c in range(ncol + 1):
-        x = 10 + c * COL_W
-        d.line([(x, 20), (x, 20 + nrow * ROW_H)], fill=0, width=2)
-    for r, row in enumerate(rows):
-        for c, text in enumerate(row):
-            if text:
-                x, y = 10 + c * COL_W + 12, 20 + r * ROW_H + 12
-                d.rectangle([x, y, x + ocr.width_for(text) - 1, y + 13], fill=0)
+    y = 20
+    for k, (marker, rows) in enumerate(tables):
+        if k > 0 or marker:
+            y += 30
+        if marker:
+            d.rectangle([20, y - 22, 20 + ocr.width_for(marker) - 1, y - 9], fill=0)
+        n = len(rows[0])
+        for r in range(len(rows) + 1):
+            d.line([(10, y + r * ROW_H), (10 + n * COL_W, y + r * ROW_H)], fill=0, width=2)
+        for c in range(n + 1):
+            d.line([(10 + c * COL_W, y), (10 + c * COL_W, y + len(rows) * ROW_H)], fill=0, width=2)
+        for r, row in enumerate(rows):
+            for c, text in enumerate(row):
+                if text:
+                    x0, y0 = 10 + c * COL_W + 12, y + r * ROW_H + 12
+                    d.rectangle([x0, y0, x0 + ocr.width_for(text) - 1, y0 + 13], fill=0)
+        y += len(rows) * ROW_H
     buf = io.BytesIO()
     img.save(buf, "PNG")
     return buf.getvalue()
 
 
+def make_table(ocr: FakeOcr, rows: list[list[str]]) -> bytes:
+    return make_tables(ocr, [(None, rows)])
+
+
+def _pad(row: list[str], n: int) -> list[str]:
+    return row + [""] * (n - len(row))
+
+
 def parse_rows(*data_rows, header=HEADER, ocr=None):
     ocr = ocr or FakeOcr()
-    png = make_table(ocr, [header, *data_rows])
+    png = make_table(ocr, [header, *(_pad(r, len(header)) for r in data_rows)])
     return parse_sieve_image(png, "001", ocr=ocr)
 
 
@@ -157,9 +177,71 @@ def test_real_engine_survives_very_wide_line():
 
 
 def test_two_row_header_with_base_columns_on_first_row():
-    row1 = ["校系代碼", "性別要求", "校系名稱", "招生名額", "", "篩選順序一"]
-    row2 = ["", "", "", "", "國文", ""]
+    row1 = ["校系代碼", "性別要求", "校系名稱", "招生名額", "", "篩選順序一"] + [""] * 11
+    row2 = ["", "", "", "", "國文", ""] + CORE[1:] + CORE
     ocr = FakeOcr()
-    png = make_table(ocr, [row1, row2, ["001012", "無", "中國文學系", "23", "前標", "社會10"]])
+    png = make_table(ocr, [row1, row2, _pad(["001012", "無", "中國文學系", "23", "前標", "社會10"], 17)])
     res = parse_sieve_image(png, "001", ocr=ocr)
     assert res.rows_skipped == 0 and res.rows[0].thresholds["國文"] == "前標"
+
+
+# ---------------------------------------------------------------- final-review fixes
+
+def test_unrecognised_header_counts_its_data_rows():
+    bad = ["校系代碼", "性別要求", "招生名額", "篩選順序一"]   # no 校系名稱
+    res = parse_rows(GOOD[:2] + GOOD[3:5], GOOD[:2] + GOOD[3:5], GOOD[:2] + GOOD[3:5], header=bad)
+    assert res.rows == [] and res.rows_skipped == 3
+    assert any("skip table" in w for w in res.warnings)
+
+
+def test_unreadable_ink_is_not_no_requirement():
+    row = GOOD + ["前標"]   # 國文 threshold has ink, but the engine returns ""
+    res = parse_rows(row, GOOD, ocr=FakeOcr(blank={"前標"}))
+    assert res.rows_skipped == 1 and [r.cac_code for r in res.rows] == ["001012"]
+    assert res.rows[0].thresholds["國文"] is None
+
+
+def test_general_table_without_core_multipliers_is_skipped():
+    header = BASE + CORE + CORE[:5]   # 自然 multiplier missing
+    res = parse_rows(GOOD, GOOD, header=header)
+    assert res.rows == [] and res.rows_skipped == 2
+    assert any("core subjects" in w for w in res.warnings)
+
+
+def test_special_group_needs_no_core_subjects():
+    ocr = FakeOcr()
+    png = make_tables(ocr, [("【檢定、倍率篩選APCS校系】", [BASE, GOOD])])
+    res = parse_sieve_image(png, "001", ocr=ocr)
+    assert res.rows_skipped == 0 and res.groups == ["檢定、倍率篩選APCS校系"]
+    assert res.rows[0].group == "檢定、倍率篩選APCS校系"
+
+
+def test_table_without_marker_continues_previous_group():
+    ocr = FakeOcr()
+    second = ["001022", "無", "外國語文學系", "20", "英文10", ""]
+    png = make_tables(ocr, [("【檢定、倍率篩選APCS校系】", [BASE, GOOD]), (None, [BASE, second])])
+    res = parse_sieve_image(png, "001", ocr=ocr)
+    assert res.groups == ["檢定、倍率篩選APCS校系", "檢定、倍率篩選APCS校系"]
+    assert [r.group for r in res.rows] == ["檢定、倍率篩選APCS校系"] * 2
+    assert any("continuing" in w for w in res.warnings)
+
+
+def test_plus_split_subjects_are_validated():
+    from collegedata.parsers.cac_sieve import expand_subjects, parse_sieve_cell
+    assert expand_subjects("英文+數學A") == ["英文", "數學A"]
+    assert expand_subjects("英文+奇怪") == []
+    lv = parse_sieve_cell("(英文+奇怪)20")
+    assert lv.subjects == [] and lv.label == "(英文+奇怪)20"
+
+
+def test_sieve_score_above_subject_maximum_skips_row():
+    res = parse_rows(GOOD[:4] + ["社會16", "*"], GOOD)
+    assert res.rows_skipped == 1 and len(res.rows) == 1
+    res = parse_rows(GOOD[:4] + ["(英文+數學A)30", "*"])
+    assert res.rows_skipped == 0
+
+
+def test_raw_cells_logged_at_debug(caplog):
+    with caplog.at_level(logging.DEBUG, logger=cac_sieve.__name__):
+        parse_rows(GOOD)
+    assert "001012" in caplog.text and "中國文學系" in caplog.text
