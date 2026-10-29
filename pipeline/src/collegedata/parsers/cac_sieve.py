@@ -202,9 +202,12 @@ def parse_sieve_cell(s: str) -> SieveLevel | None:
 
 
 def normalize_program_name(name: str, gender: str | None) -> str:
+    """NFKC, no whitespace, half-width parens; a 男/女 gender adds a (男)/(女) suffix once."""
     n = re.sub(r"\s+", "", unicodedata.normalize("NFKC", name))  # NFKC also maps （） to ()
     g = normalize_text(gender or "")
-    return f"{n}({g})" if g in ("男", "女") else n
+    if g not in ("男", "女") or n.endswith(f"({g})"):
+        return n
+    return f"{n}({g})"
 
 
 # ------------------------------------------------------------------------ OCR
@@ -310,7 +313,7 @@ class SieveRow:
     school_code: str
     cac_code: str
     gender: str | None
-    name: str
+    name: str  # normalised, without the gender suffix (the job adds it)
     quota: int
     group: str
     thresholds: dict[str, str | None]
@@ -432,7 +435,7 @@ def _build_row(cells: list[str], mapping: dict[int, tuple[str, str]], school_cod
             levels.append(level)
     return SieveRow(
         school_code=school_code, cac_code=code, gender=gender,
-        name=normalize_program_name(_repair_name(base["name"]), gender), quota=quota, group=group,
+        name=normalize_program_name(_repair_name(base["name"]), None), quota=quota, group=group,
         thresholds=thresholds, multipliers=multipliers, extra=extra, sieve=levels,
         overflow_tiebreak=_parse_overflow(base.get("overflow", "")), raw_cells=cells,
     )

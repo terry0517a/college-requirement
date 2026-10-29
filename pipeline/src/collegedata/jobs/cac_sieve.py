@@ -26,7 +26,7 @@ def target_years(today: datetime.date) -> list[int]:
 
 
 def college_list_url(roc: int) -> str:
-    return f"{BASE}/cacportal/apply_his_report/{roc}/{roc}_sieve_standard/report/{roc}_collegeList.htm"
+    return f"{BASE}/cacportal/apply_his_report/{roc}/{roc}_sieve_standard/collegeList.htm"
 
 
 def image_url(roc: int, school_code: str) -> str:

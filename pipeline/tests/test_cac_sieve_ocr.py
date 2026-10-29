@@ -24,7 +24,7 @@ def test_chinese_literature_row(crop):
 
 def test_gender_split_rows(crop):
     rows = [r for r in crop.rows if r.cac_code == "001082"]
-    assert [(r.gender, r.name, r.quota) for r in rows] == [("男", "戲劇學系(男)", 8), ("女", "戲劇學系(女)", 9)]
+    assert [(r.gender, r.name, r.quota) for r in rows] == [("男", "戲劇學系", 8), ("女", "戲劇學系", 9)]
     assert rows[0].sieve[2].label == "國英數B社43" and rows[1].sieve[2].label == "國英數B社45"
     assert rows[0].sieve[2].subjects == ["國文", "英文", "數學B", "社會"]
 
@@ -135,7 +135,7 @@ def test_misread_code_on_first_data_row_is_counted():
 def test_name_repair_logs(caplog):
     with caplog.at_level(logging.WARNING, logger=cac_sieve.__name__):
         res = parse_rows(["001082", "男", "劇學系", "8", "社會10", ""])
-    assert res.rows[0].name == "戲劇學系(男)"
+    assert res.rows[0].name == "戲劇學系" and res.rows[0].gender == "男"
     assert "name repaired" in caplog.text
 
 

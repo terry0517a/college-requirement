@@ -205,3 +205,20 @@ def test_zero_rows_parsed_is_failed_not_done(db, httpx_mock):
     r = run_job(_job(max_schools=2, parse=empty), db)
     assert r.status == "success"
     assert db.execute("select status, error from cac_fetch where school_code='001'").fetchone() == ("failed", "UnitQualityError: no rows parsed")
+
+
+def test_literal_urls_for_115():
+    assert college_list_url(115) == "https://www.cac.edu.tw/cacportal/apply_his_report/115/115_sieve_standard/collegeList.htm"
+    assert image_url(115, "001") == "https://www.cac.edu.tw/cacportal/apply_his_report/115/115_sieve_standard/report/pict/001.png"
+
+
+def test_gender_suffix_applied_once_by_job(db, httpx_mock):
+    # rows exactly as the real parser emits them: unsuffixed name, gender in its own field
+    def real_shaped(png, school_code, ocr=None):
+        return SieveParseResult([_row("001082", "戲劇學系", "男", 8), _row("001082", "戲劇學系", "女", 9)], 0, [], ["一般校系"])
+    _mock_year(httpx_mock, 115, pngs=("001",))
+    for roc in (114, 113): httpx_mock.add_response(url=college_list_url(roc), status_code=404, is_reusable=True)
+    r = run_job(_job(max_schools=1, parse=real_shaped), db)
+    assert r.status == "success" and r.rows_written == 2
+    names = [x[0] for x in db.execute("select name_zh from program order by name_zh").fetchall()]
+    assert names == ["戲劇學系(女)", "戲劇學系(男)"]

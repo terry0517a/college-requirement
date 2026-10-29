@@ -77,3 +77,8 @@ def test_parse_multiplier_and_level_edges():
     assert parse_multiplier("NaN") is None and parse_multiplier("Infinity") is None
     assert [parse_level(x) for x in ("前", "後", "底")] == ["前標", "後標", "底標"]
     assert parse_level("X") is None
+
+def test_normalize_program_name_is_idempotent():
+    once = normalize_program_name("戲劇學系", "男")
+    assert normalize_program_name(once, "男") == "戲劇學系(男)"
+    assert normalize_program_name("戲劇學系（女）", "女") == "戲劇學系(女)"
