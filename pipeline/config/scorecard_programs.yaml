@@ -1,0 +1,152 @@
+- key: agriculture
+  cip2: "01"
+  name_en: "Agriculture, Agriculture Operations, and Related Sciences"
+  field_code: agriculture
+- key: resources
+  cip2: "03"
+  name_en: "Natural Resources and Conservation"
+  field_code: agriculture
+- key: architecture
+  cip2: "04"
+  name_en: "Architecture and Related Services"
+  field_code: architecture
+- key: ethnic_cultural_gender
+  cip2: "05"
+  name_en: "Area, Ethnic, Cultural, Gender, and Group Studies"
+  field_code: social_science
+- key: communication
+  cip2: "09"
+  name_en: "Communication, Journalism, and Related Programs"
+  field_code: communication
+- key: communications_technology
+  cip2: "10"
+  name_en: "Communications Technologies/Technicians and Support Services"
+  field_code: communication
+- key: computer
+  cip2: "11"
+  name_en: "Computer and Information Sciences and Support Services"
+  field_code: cs
+- key: personal_culinary
+  cip2: "12"
+  name_en: "Personal and Culinary Services"
+  field_code: applied
+- key: education
+  cip2: "13"
+  name_en: "Education"
+  field_code: education
+- key: engineering
+  cip2: "14"
+  name_en: "Engineering"
+  field_code: engineering
+- key: engineering_technology
+  cip2: "15"
+  name_en: "Engineering Technologies and Engineering-Related Fields"
+  field_code: engineering
+- key: language
+  cip2: "16"
+  name_en: "Foreign Languages, Literatures, and Linguistics"
+  field_code: humanities
+- key: family_consumer_science
+  cip2: "19"
+  name_en: "Family and Consumer Sciences/Human Sciences"
+  field_code: applied
+- key: legal
+  cip2: "22"
+  name_en: "Legal Professions and Studies"
+  field_code: law
+- key: english
+  cip2: "23"
+  name_en: "English Language and Literature/Letters"
+  field_code: humanities
+- key: humanities
+  cip2: "24"
+  name_en: "Liberal Arts and Sciences, General Studies and Humanities"
+  field_code: humanities
+- key: library
+  cip2: "25"
+  name_en: "Library Science"
+  field_code: humanities
+- key: biological
+  cip2: "26"
+  name_en: "Biological and Biomedical Sciences"
+  field_code: life_science
+- key: mathematics
+  cip2: "27"
+  name_en: "Mathematics and Statistics"
+  field_code: math
+- key: military
+  cip2: "29"
+  name_en: "Military Technologies and Applied Sciences"
+  field_code: public_affairs
+- key: multidiscipline
+  cip2: "30"
+  name_en: "Multi/Interdisciplinary Studies"
+  field_code: interdisciplinary
+- key: parks_recreation_fitness
+  cip2: "31"
+  name_en: "Parks, Recreation, Leisure, and Fitness Studies"
+  field_code: applied
+- key: philosophy_religious
+  cip2: "38"
+  name_en: "Philosophy and Religious Studies"
+  field_code: humanities
+- key: theology_religious_vocation
+  cip2: "39"
+  name_en: "Theology and Religious Vocations"
+  field_code: humanities
+- key: physical_science
+  cip2: "40"
+  name_en: "Physical Sciences"
+  field_code: physical_science
+- key: science_technology
+  cip2: "41"
+  name_en: "Science Technologies/Technicians"
+  field_code: interdisciplinary
+- key: psychology
+  cip2: "42"
+  name_en: "Psychology"
+  field_code: psychology
+- key: security_law_enforcement
+  cip2: "43"
+  name_en: "Homeland Security, Law Enforcement, Firefighting and Related Protective Services"
+  field_code: public_affairs
+- key: public_administration_social_service
+  cip2: "44"
+  name_en: "Public Administration and Social Service Professions"
+  field_code: public_affairs
+- key: social_science
+  cip2: "45"
+  name_en: "Social Sciences"
+  field_code: social_science
+- key: construction
+  cip2: "46"
+  name_en: "Construction Trades"
+  field_code: applied
+- key: mechanic_repair_technology
+  cip2: "47"
+  name_en: "Mechanic and Repair Technologies/Technicians"
+  field_code: applied
+- key: precision_production
+  cip2: "48"
+  name_en: "Precision Production"
+  field_code: applied
+- key: transportation
+  cip2: "49"
+  name_en: "Transportation and Materials Moving"
+  field_code: applied
+- key: visual_performing
+  cip2: "50"
+  name_en: "Visual and Performing Arts"
+  field_code: arts
+- key: health
+  cip2: "51"
+  name_en: "Health Professions and Related Programs"
+  field_code: health
+- key: business_marketing
+  cip2: "52"
+  name_en: "Business, Management, Marketing, and Related Support Services"
+  field_code: business
+- key: history
+  cip2: "54"
+  name_en: "History"
+  field_code: humanities
