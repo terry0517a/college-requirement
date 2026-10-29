@@ -65,3 +65,15 @@ def test_normalize_program_name():
     assert normalize_program_name("戲劇學系", "男") == "戲劇學系(男)"
     assert normalize_program_name(" 資訊工程學系 (APCS組)", "無") == "資訊工程學系(APCS組)"
     assert parse_quota(" 57 ") == 57
+
+def test_normalize_program_name_nfkc_keeps_text():
+    assert normalize_program_name("資訊工程學系（ＡＰＣＳ組）", None) == "資訊工程學系(APCS組)"
+
+def test_parse_sieve_cell_edge_cases():
+    assert parse_sieve_cell("13") is None
+    assert parse_sieve_cell("英文2.5").min_score == Decimal("2.5")
+
+def test_parse_multiplier_and_level_edges():
+    assert parse_multiplier("NaN") is None and parse_multiplier("Infinity") is None
+    assert [parse_level(x) for x in ("前", "後", "底")] == ["前標", "後標", "底標"]
+    assert parse_level("X") is None

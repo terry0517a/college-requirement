@@ -264,12 +264,12 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
-    { name = "numpy", specifier = ">=2.5.4" },
+    { name = "numpy", specifier = ">=2" },
     { name = "pdfplumber", specifier = ">=0.11" },
-    { name = "pillow", specifier = ">=13.0.0" },
+    { name = "pillow", specifier = ">=10" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pyyaml", specifier = ">=6" },
-    { name = "rapidocr-onnxruntime", specifier = ">=1.4.4" },
+    { name = "rapidocr-onnxruntime", specifier = ">=1.4" },
 ]
 
 [package.metadata.requires-dev]

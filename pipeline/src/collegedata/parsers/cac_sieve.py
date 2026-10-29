@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import re
+import unicodedata
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
@@ -136,9 +137,10 @@ def parse_listening(s: str) -> str | None:
 
 def parse_multiplier(s: str) -> Decimal | None:
     try:
-        return Decimal(normalize_text(s))
+        d = Decimal(normalize_text(s))
     except InvalidOperation:
         return None
+    return d if d.is_finite() else None
 
 
 def parse_quota(s: str) -> int:
@@ -179,7 +181,7 @@ def expand_subjects(s: str) -> list[str]:
     return out
 
 
-_CELL = re.compile(r"^(.*?)(\d+(?:\.\d+)?)$")
+_CELL = re.compile(r"^\(?(.+?)\)?\s*(\d+(?:\.\d+)?)$")
 
 
 def parse_sieve_cell(s: str) -> SieveLevel | None:
@@ -187,16 +189,13 @@ def parse_sieve_cell(s: str) -> SieveLevel | None:
     if t in _MISSING:
         return None
     m = _CELL.match(t)
-    if not m:
+    if not m or re.fullmatch(r"[\d.]+", m.group(1)):  # bare number: the lazy group swallowed a digit
         return None
-    subjects = m.group(1)
-    if subjects.startswith("(") and subjects.endswith(")"):
-        subjects = subjects[1:-1]
-    return SieveLevel(order=0, label=t, subjects=expand_subjects(subjects),
+    return SieveLevel(order=0, label=t, subjects=expand_subjects(m.group(1)),
                       min_score=Decimal(m.group(2)))
 
 
 def normalize_program_name(name: str, gender: str | None) -> str:
-    n = normalize_text(name)
+    n = re.sub(r"\s+", "", unicodedata.normalize("NFKC", name))  # NFKC also maps （） to ()
     g = normalize_text(gender or "")
     return f"{n}({g})" if g in ("男", "女") else n
