@@ -6,6 +6,8 @@ on:
     - cron: "0 4 * * 2"   # openalex, weekly Tuesday
     - cron: "0 5 * * 3"   # uac, weekly Wednesday
     - cron: "0 6 * * 4"   # scorecard, weekly Thursday
+    - cron: "0 3 * * 5"   # cac_sieve, weekly Friday
+    - cron: "0 3 * * 6"   # cac_rules, weekly Saturday
   workflow_dispatch:
     inputs:
       job:
@@ -17,6 +19,16 @@ on:
           - uac
           - openalex
           - scorecard
+          - cac_sieve
+          - cac_rules
+      max_schools:
+        description: "cac jobs only: schools per run (default 10)"
+        type: string
+        required: false
+      time_budget_minutes:
+        description: "cac jobs only: minutes before the run stops starting new schools (default 75)"
+        type: string
+        required: false
 
 permissions:
   issues: write
@@ -45,6 +57,8 @@ jobs:
               "0 4 * * 2") JOB=openalex ;;
               "0 5 * * 3") JOB=uac ;;
               "0 6 * * 4") JOB=scorecard ;;
+              "0 3 * * 5") JOB=cac_sieve ;;
+              "0 3 * * 6") JOB=cac_rules ;;
               *) echo "Unknown schedule: $SCHEDULE" >&2; exit 1 ;;
             esac
           fi
@@ -64,6 +78,8 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           OPENALEX_API_KEY: ${{ secrets.OPENALEX_API_KEY }}
           SCORECARD_API_KEY: ${{ secrets.SCORECARD_API_KEY }}
+          CAC_MAX_SCHOOLS: ${{ github.event.inputs.max_schools }}
+          CAC_TIME_BUDGET_MINUTES: ${{ github.event.inputs.time_budget_minutes }}
         run: uv run collegedata run "$JOB"
       - name: Open issue on failure
         if: failure()

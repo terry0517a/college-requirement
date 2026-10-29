@@ -24,7 +24,7 @@ def test_rls_enabled_on_every_table(db):
 def test_anon_read_policies(db):
     pol = {r[0]: r[1:] for r in db.execute("select tablename, policyname, cmd, roles from pg_policies where schemaname='public'")}
     assert "fetch_log" not in pol
-    for t in _public_tables(db) - {"fetch_log"}:
+    for t in _public_tables(db) - {"fetch_log", "cac_fetch"}:
         assert pol.get(t) == (f"{t}_anon_read", "SELECT", ["anon"]), t
 
 def test_openalex_id_unique(db):

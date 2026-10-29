@@ -32,6 +32,20 @@
 | `openalex` | `0 4 * * 2` | 每週二 04:00（UTC）；每次最多處理 800 所學校（可用環境變數 `OPENALEX_BATCH_SIZE` 調整），依 `openalex_checked_at` 最舊者優先輪替（尚未檢查過的學校最先），逐週輪替（全部學校約一個月輪完一遍）；遇到 HTTP 429（免費額度用完）即停止並保留已寫入的資料，下次執行接續；若一批內每個請求都失敗，job 會失敗並自動開 Issue |
 | `uac` | `0 5 * * 3` | 每週三 05:00（UTC）；每次重新下載最近三個學年的 PDF，放榜後的新年度會自動納入 |
 | `scorecard` | `0 6 * * 4` | 每週四 06:00（UTC）；每次重抓最新三個資料年，每次約 16 頁請求加最多 6 次年度探測 |
+| `cac_sieve` | `0 3 * * 5` | 每週五 03:00（UTC）；甄選會「篩選標準」圖片 OCR。額度制：每次最多處理 10 所學校、最長 75 分鐘（`CAC_MAX_SCHOOLS`、`CAC_TIME_BUDGET_MINUTES`），已完成的學校／學年記在 `cac_fetch`，累積完成、不重抓。初次載入請到 Actions 手動執行並設 `max_schools=30`、`time_budget_minutes=100` 多跑幾次：三個學年約 195 張圖，每次 30 所 → 約 7 次 |
+| `cac_rules` | `0 3 * * 6` | 每週六 03:00（UTC）；當年度校系分則頁面。同為額度制、累積完成；初次載入同樣手動設 `max_schools=30`、`time_budget_minutes=100`：約 64 所，每次 30 所 → 約 3 次 |
+
+兩個 cac job 不需要額外 secret，只用 `DATABASE_URL`。
+
+## 重抓甄選會資料
+
+`cac_sieve`、`cac_rules` 以 `cac_fetch` 表記錄已完成的項目，已完成者不會再抓。若要強制重抓某學年，到 Supabase SQL Editor 刪除該筆紀錄，下次執行就會重抓，例如：
+
+```sql
+delete from cac_fetch where job = 'cac_sieve' and roc_year = 115;
+```
+
+甄選會網站回「流量過大」時，job 會提早結束：只要本次至少有一所學校成功，就不算失敗，下次排程接續；若一所都沒成功，job 失敗並自動開 Issue。
 
 ## 失敗通知
 
