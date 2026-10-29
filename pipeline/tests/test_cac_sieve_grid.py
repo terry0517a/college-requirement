@@ -23,6 +23,10 @@ def test_cell_lines_splits_two_line_cell():
     # stacked header label 數學/A (header row 2, column 6) and a stacked APCS cell below.
     y0, y1, _ = rows[1]
     assert len(cell_lines(g, y0, y1, vl[6], vl[7])) == 2
+    # 2 header grid rows, then 20 data rows; 心理學系 001132 is data row index 13 (戲劇學系 男/女 share a code)
+    y0, y1, _ = rows[2 + 13]
+    assert len(cell_lines(g, y0, y1, vl[18], vl[19])) == 2   # 篩選順序一 wraps to two lines
+    assert len(cell_lines(g, y0, y1, vl[0], vl[1])) == 1     # 校系代碼 single line
     y0, y1, _ = rows[3]                                   # first data row: 001012 中國文學系
     assert len(cell_lines(g, y0, y1, vl[18], vl[19])) == 1  # 篩選順序一 single line
     assert cell_lines(g, y0, y1, vl[4], vl[5]) == [] or len(cell_lines(g, y0, y1, vl[4], vl[5])) == 1
