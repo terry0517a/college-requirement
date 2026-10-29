@@ -5,18 +5,20 @@
 1. 到 [supabase.com](https://supabase.com) 建立免費專案。
 2. 在專案 Settings → Database 取得連線字串，選 Session pooler 模式。
 3. 本機執行 `supabase link --project-ref <ref>`，再執行 `supabase db push` 套用 migration。
-4. 到 GitHub 儲存庫 Settings → Secrets and variables → Actions 新增兩個 secrets：
+4. 到 GitHub 儲存庫 Settings → Secrets and variables → Actions 新增三個 secrets：
    - `DATABASE_URL`：步驟 2 的連線字串。
    - `OPENALEX_API_KEY`：到 <https://openalex.org/settings/api> 申請。
-5. 到 Actions 頁面，對 `pipeline` workflow 以 `workflow_dispatch` 手動依序執行 `hipo` → `uac` → `openalex`，做初始資料載入。
+   - `SCORECARD_API_KEY`：到 <https://api.data.gov/signup/> 填 email 即可立即取得，免費，每小時 1,000 次請求。
+5. 到 Actions 頁面，對 `pipeline` workflow 以 `workflow_dispatch` 手動依序執行 `hipo` → `scorecard` → `uac` → `openalex`，做初始資料載入。
 
 ## 排程
 
 | Job | cron | 說明 |
 | --- | --- | --- |
 | `hipo` | `0 3 * * 1` | 每週一 03:00（UTC） |
-| `openalex` | `0 4 * * 2` | 每週二 04:00（UTC）；每次最多處理 800 所學校（可用環境變數 `OPENALEX_BATCH_SIZE` 調整），尚未連結 OpenAlex 的學校優先，其餘依研究主題最舊者優先更新，逐週輪替（全部學校約一個月輪完一遍）；遇到 HTTP 429（免費額度用完）即停止並保留已寫入的資料，下次執行接續 |
+| `openalex` | `0 4 * * 2` | 每週二 04:00（UTC）；每次最多處理 800 所學校（可用環境變數 `OPENALEX_BATCH_SIZE` 調整），依 `openalex_checked_at` 最舊者優先輪替（尚未檢查過的學校最先），逐週輪替（全部學校約一個月輪完一遍）；遇到 HTTP 429（免費額度用完）即停止並保留已寫入的資料，下次執行接續；若一批內每個請求都失敗，job 會失敗並自動開 Issue |
 | `uac` | `0 5 * * 3` | 每週三 05:00（UTC）；每次重新下載最近三個學年的 PDF，放榜後的新年度會自動納入 |
+| `scorecard` | `0 6 * * 4` | 每週四 06:00（UTC）；每次重抓最新三個資料年，約 16 個 API 請求 |
 
 ## 失敗通知
 
