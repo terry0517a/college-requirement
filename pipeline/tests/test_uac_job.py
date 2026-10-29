@@ -1,6 +1,6 @@
-import json, pathlib, pytest, httpx
+import datetime, json, pathlib, pytest, httpx
 from collegedata.jobs.hipo import upsert_institutions
-from collegedata.jobs.uac import UacJob, UnknownSchoolError
+from collegedata.jobs.uac import UacJob, UnknownSchoolError, year_urls
 from collegedata.sources import ensure_source
 from collegedata.runner import run_job
 
@@ -43,3 +43,32 @@ def test_unknown_school_fails_loudly(db, httpx_mock, tmp_path, monkeypatch):
     r = run_job(UacJob(client=httpx.Client(), years=[115]), db)
     assert r.status == "failed" and "國立臺灣大學" in r.error
     assert db.execute("select count(*) from admission_stat").fetchone()[0] == 0
+
+TODAY = datetime.date(2026, 10, 29)
+U = "https://www2.uac.edu.tw/{0}data/{0}_result_school_data.pdf"
+
+def test_year_urls_current_and_two_previous(monkeypatch):
+    monkeypatch.setattr("collegedata.jobs.uac.load_years", lambda: [])
+    assert year_urls(TODAY) == [(115, U.format(115)), (114, U.format(114)), (113, U.format(113))]
+
+def test_year_urls_yaml_override(monkeypatch):
+    monkeypatch.setattr("collegedata.jobs.uac.load_years",
+                        lambda: [{"roc_year": 114, "url": "https://example.org/114.pdf"}])
+    assert year_urls(TODAY) == [(115, U.format(115)), (114, "https://example.org/114.pdf"), (113, U.format(113))]
+
+def test_404_on_newest_year_fails(db, httpx_mock, monkeypatch):
+    monkeypatch.setattr("collegedata.jobs.uac.load_years", lambda: [])
+    httpx_mock.add_response(url=U.format(115), status_code=404, is_reusable=True)  # runner retries
+    r = run_job(UacJob(client=httpx.Client(), today=TODAY), db)
+    assert r.status == "failed" and "404" in r.error
+
+def test_404_on_older_year_is_skipped(db, httpx_mock, monkeypatch):
+    monkeypatch.setattr("collegedata.jobs.uac.load_years", lambda: [])
+    _seed(db)
+    httpx_mock.add_response(url=U.format(115), content=PDF)
+    httpx_mock.add_response(url=U.format(114), status_code=404)
+    httpx_mock.add_response(url=U.format(113), content=PDF)
+    r = run_job(UacJob(client=httpx.Client(), today=TODAY), db)
+    assert r.status == "success" and r.rows_written > 0
+    years = {x[0] for x in db.execute("select distinct year from admission_stat")}
+    assert years == {2026, 2024}

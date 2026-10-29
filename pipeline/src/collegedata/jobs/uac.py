@@ -1,4 +1,6 @@
 import csv
+import datetime
+import logging
 import tempfile
 from pathlib import Path
 
@@ -13,6 +15,10 @@ CONFIG_DIR = Path(__file__).resolve().parents[3] / "config"
 SCHOOLS_PATH = CONFIG_DIR / "tw_institutions.csv"
 YEARS_PATH = CONFIG_DIR / "uac_years.yaml"
 PATHWAY = "tw_distribution"
+URL_PATTERN = "https://www2.uac.edu.tw/{roc}data/{roc}_result_school_data.pdf"
+YEARS_BACK = 2
+
+log = logging.getLogger(__name__)
 
 
 class UnknownSchoolError(Exception):
@@ -27,7 +33,15 @@ def load_school_map() -> dict[str, tuple[str, str]]:
 
 
 def load_years() -> list[dict]:
-    return yaml.safe_load(YEARS_PATH.read_text(encoding="utf-8"))
+    """URL overrides only (roc_year/url); years without an entry use URL_PATTERN."""
+    return yaml.safe_load(YEARS_PATH.read_text(encoding="utf-8")) or []
+
+
+def year_urls(today: datetime.date | None = None) -> list[tuple[int, str]]:
+    """The current ROC year and the two before it, newest first."""
+    roc = (today or datetime.date.today()).year - 1911
+    overrides = {e["roc_year"]: e["url"] for e in load_years()}
+    return [(y, overrides.get(y, URL_PATTERN.format(roc=y))) for y in range(roc, roc - YEARS_BACK - 1, -1)]
 
 
 def _institution_id(conn, cache, school_zh, school_map, source_id, source_url) -> int:
@@ -54,9 +68,11 @@ def _institution_id(conn, cache, school_zh, school_map, source_id, source_url) -
 class UacJob:
     name = "uac"
 
-    def __init__(self, client: httpx.Client | None = None, years: list[int] | None = None):
+    def __init__(self, client: httpx.Client | None = None, years: list[int] | None = None,
+                 today: datetime.date | None = None):
         self.client = client
         self.years = years
+        self.today = today
 
     def run(self, conn) -> int:
         client = self.client or httpx.Client(timeout=60, follow_redirects=True)
@@ -64,11 +80,12 @@ class UacJob:
         school_map = load_school_map()
         cache: dict[str, int] = {}
         total = 0
-        for entry in load_years():
-            roc_year, url = entry["roc_year"], entry["url"]
-            if self.years is not None and roc_year not in self.years:
-                continue
+        selected = [(y, u) for y, u in year_urls(self.today) if self.years is None or y in self.years]
+        for i, (roc_year, url) in enumerate(selected):
             resp = client.get(url, timeout=60)
+            if resp.status_code == 404 and i > 0:
+                log.warning("UAC: %s returned 404 for ROC year %s; skipping", url, roc_year)
+                continue
             resp.raise_for_status()
             with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp:
                 tmp.write(resp.content)

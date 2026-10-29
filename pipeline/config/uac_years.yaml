@@ -1,3 +1,6 @@
-# TODO: add the 114 and 113 PDF URLs (from https://www.uac.edu.tw/) later.
-- roc_year: 115
-  url: https://www2.uac.edu.tw/115data/115_result_school_data.pdf
+# URL overrides for UAC result PDFs. The job always loads the current ROC year
+# and the two before it, using https://www2.uac.edu.tw/{roc}data/{roc}_result_school_data.pdf
+# unless a year is listed here. Format:
+# - roc_year: 114
+#   url: https://...
+[]
