@@ -52,8 +52,12 @@ def run_job(job: Job, conn) -> FetchResult:
         try:
             result = FetchResult("success", _attempt(job, conn), None)
             break
+        except RowCountDropped as exc:
+            # Deterministic: re-running would give the same count, so do not retry.
+            result = FetchResult("failed", None, f"{type(exc).__name__}: {exc}")
+            break
         except Exception as exc:  # noqa: BLE001 - recorded in fetch_log
-            result = FetchResult("failed", None, str(exc))
+            result = FetchResult("failed", None, f"{type(exc).__name__}: {exc}")
 
     conn.execute(
         "update fetch_log set status = %s, finished_at = now(), rows_written = %s, error = %s where id = %s",

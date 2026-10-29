@@ -47,3 +47,18 @@ def test_row_count_guard_opt_out(db):
     run_job(NoGuardJob(rows=100), db)
     r = run_job(NoGuardJob(rows=1), db)
     assert r.status == "success" and r.rows_written == 1
+
+def test_error_includes_exception_type(db):
+    class SilentJob:
+        name = "fake"
+        def run(self, conn):
+            raise ValueError()
+    r = run_job(SilentJob(), db)
+    assert r.status == "failed" and r.error and "ValueError" in r.error
+    assert "ValueError" in _last_log(db)[2]
+
+def test_row_count_drop_is_not_retried(db):
+    run_job(FakeJob(rows=100), db)
+    job = FakeJob(rows=40)
+    r = run_job(job, db)
+    assert r.status == "failed" and "RowCountDropped" in r.error and job.calls == 1
