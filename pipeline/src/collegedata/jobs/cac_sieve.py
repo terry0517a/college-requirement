@@ -4,10 +4,9 @@ import re
 
 from psycopg.types.json import Jsonb
 
-from collegedata.cac_http import BusyError, CacFetcher, make_client
+from collegedata.cac_http import CacFetcher, make_client
 from collegedata.jobs.cac_common import (
-    BASE, Budget, UnitQualityError, UnitStats, done_units, finish, merge_requirement, run_units,
-    upsert_program,
+    BASE, Budget, UnitQualityError, finish, merge_requirement, pending_units, run_units, upsert_program,
 )
 from collegedata.jobs.uac import UnknownSchoolError, _institution_id, load_school_map
 from collegedata.parsers.cac_sieve import SieveRow, normalize_program_name, parse_sieve_image
@@ -59,6 +58,7 @@ def sieve_json(r: SieveRow) -> list[dict]:
 class CacSieveJob:
     name = "cac_sieve"
     row_count_guard = False
+    retryable = False  # a retry would re-download images; failed units are retried next run
 
     def __init__(self, client=None, today=None, parse=parse_sieve_image, budget=None, fetcher=None):
         self.fetcher = fetcher or CacFetcher(client or make_client())
@@ -67,34 +67,34 @@ class CacSieveJob:
         self.budget = budget
 
     def run(self, conn) -> int:
-        budget = self.budget or Budget.from_env()
+        if self.budget is None:  # once per job instance, never per attempt
+            self.budget = Budget.from_env()
         source_id = ensure_source(conn, "cac")
         school_map = load_school_map()
         cache: dict[str, int] = {}
-        years = target_years(self.today or datetime.date.today())
-        stats = UnitStats()
-        for i, roc in enumerate(years):
+        names: dict[tuple[int, str], str] = {}
+        units: list[tuple[int, str, str]] = []
+        for i, roc in enumerate(target_years(self.today or datetime.date.today())):
             list_url = college_list_url(roc)
-            try:
-                resp = self.fetcher.get(list_url)
-            except BusyError:
-                if stats.succeeded == 0:
-                    raise
-                log.warning("CAC sieve: busy fetching %s; stopping with %d schools done", list_url, stats.succeeded)
-                break
+            resp = self.fetcher.get(list_url)
             if resp.status_code == 404 and i > 0:
                 log.warning("CAC sieve: %s returned 404 for ROC year %s; skipping", list_url, roc)
                 continue
             resp.raise_for_status()
-            done = done_units(conn, self.name, roc)
-            names = {c: n for c, n in parse_college_list(resp.text) if c not in done}
-            run_units(
-                conn, self.name, [(roc, c, image_url(roc, c)) for c in names],
-                lambda r, c: self._process(conn, r, c, names[c], image_url(r, c), school_map, cache, source_id),
-                budget, cache, "CAC sieve", stats,
-            )
-            if stats.busy:
-                break
+            schools = parse_college_list(resp.text)
+            if not schools:
+                raise ValueError(f"no schools found in {list_url} (format change?)")
+            missing = sorted({n for _, n in schools if n not in school_map})
+            if missing:
+                raise UnknownSchoolError(missing)
+            for c, n in schools:
+                names[(roc, c)] = n
+                units.append((roc, c, image_url(roc, c)))
+        stats = run_units(
+            conn, self.name, pending_units(conn, self.name, units),
+            lambda r, c: self._process(conn, r, c, names[(r, c)], image_url(r, c), school_map, cache, source_id),
+            self.budget, cache, "CAC sieve",
+        )
         finish(stats.attempted, stats.succeeded, self.name)
         return stats.written
 
@@ -108,8 +108,6 @@ class CacSieveJob:
             raise UnitQualityError(f"{res.rows_skipped}/{total} rows skipped", res.rows_skipped)
         if total == 0:
             raise UnitQualityError("no rows parsed")
-        if res.rows and school_zh not in school_map:
-            raise UnknownSchoolError([school_zh])
         year = roc + 1911
         count = 0
         for r in res.rows:

@@ -13,6 +13,8 @@ from collegedata.cac_http import BusyError
 BASE = "https://www.cac.edu.tw"
 DEFAULT_MAX_SCHOOLS = 10
 DEFAULT_TIME_BUDGET_MINUTES = 75
+MAX_TIME_BUDGET_MINUTES = 90  # leaves room for one in-flight image inside the 120-minute workflow timeout
+MAX_UNIT_ATTEMPTS = 3
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +31,9 @@ class Budget:
         # Empty strings (unset GitHub Actions inputs) count as unset.
         max_schools = int(os.environ.get("CAC_MAX_SCHOOLS") or DEFAULT_MAX_SCHOOLS)
         minutes = float(os.environ.get("CAC_TIME_BUDGET_MINUTES") or DEFAULT_TIME_BUDGET_MINUTES)
+        if minutes > MAX_TIME_BUDGET_MINUTES:
+            log.warning("CAC_TIME_BUDGET_MINUTES=%s exceeds %s; clamped", minutes, MAX_TIME_BUDGET_MINUTES)
+            minutes = MAX_TIME_BUDGET_MINUTES
         return cls(max_schools, timedelta(minutes=minutes), clock(), clock)
 
     def exhausted(self, done_count: int, clock=None) -> bool:
@@ -44,13 +49,54 @@ def done_units(conn, job: str, roc_year: int) -> set[str]:
     return {r[0] for r in rows}
 
 
+def unit_attempts(conn, job: str, roc_year: int) -> dict[str, int]:
+    """school_code -> attempts, for every unit of this job/year present in cac_fetch."""
+    rows = conn.execute(
+        "select school_code, attempts from cac_fetch where job = %s and roc_year = %s", (job, roc_year)
+    ).fetchall()
+    return {r[0]: r[1] for r in rows}
+
+
+def exhausted_units(conn, job: str, roc_year: int, max_attempts: int = MAX_UNIT_ATTEMPTS) -> set[str]:
+    """Failed units that are no longer retried automatically (delete the cac_fetch row to retry)."""
+    rows = conn.execute(
+        "select school_code from cac_fetch where job = %s and roc_year = %s and status = 'failed' and attempts >= %s",
+        (job, roc_year, max_attempts),
+    ).fetchall()
+    return {r[0] for r in rows}
+
+
+def pending_units(conn, job: str, units: list[tuple[int, str, str]]) -> list[tuple[int, str, str]]:
+    """Order (roc_year, school_code, url) units, given in list order, for this run.
+
+    Never-attempted units come first, then failed ones; done and exhausted units are dropped.
+    Each group keeps the input order (newest year first, then the source list's order).
+    """
+    fresh: list[tuple[int, str, str]] = []
+    retry: list[tuple[int, str, str]] = []
+    for roc in dict.fromkeys(u[0] for u in units):
+        attempted = unit_attempts(conn, job, roc)
+        exhausted = exhausted_units(conn, job, roc)
+        skip = done_units(conn, job, roc) | exhausted
+        for code in sorted(exhausted & {u[1] for u in units if u[0] == roc}):
+            log.warning("%s %s/%s: failed %d times; not retried until its cac_fetch row is deleted",
+                        job, roc, code, attempted[code])
+        for u in units:
+            if u[0] != roc or u[1] in skip:
+                continue
+            (retry if u[1] in attempted else fresh).append(u)
+    return fresh + retry
+
+
 def record_unit(conn, job, roc_year, school_code, url, status, rows_written, rows_skipped, error) -> None:
     conn.execute(
-        """insert into cac_fetch (job, roc_year, school_code, url, status, rows_written, rows_skipped, error, fetched_at)
-           values (%s, %s, %s, %s, %s, %s, %s, %s, now())
+        """insert into cac_fetch (job, roc_year, school_code, url, status, rows_written, rows_skipped, error,
+                                  attempts, fetched_at)
+           values (%s, %s, %s, %s, %s, %s, %s, %s, 1, now())
            on conflict (job, roc_year, school_code) do update set
                url = excluded.url, status = excluded.status, rows_written = excluded.rows_written,
-               rows_skipped = excluded.rows_skipped, error = excluded.error, fetched_at = excluded.fetched_at""",
+               rows_skipped = excluded.rows_skipped, error = excluded.error,
+               attempts = cac_fetch.attempts + 1, fetched_at = excluded.fetched_at""",
         (job, roc_year, school_code, url, status, rows_written, rows_skipped, error),
     )
 
@@ -81,9 +127,15 @@ def merge_requirement(conn, program_id, year, requirement: dict, source_id, sour
     )
 
 
+class AllUnitsFailed(RuntimeError):
+    """Fails the job; the runner keeps the cac_fetch 'failed' rows so attempts still count."""
+
+    keep_writes = True
+
+
 def finish(attempted: int, succeeded: int, job: str) -> None:
     if attempted >= 1 and succeeded == 0:
-        raise RuntimeError(f"{job}: all {attempted} units failed")
+        raise AllUnitsFailed(f"{job}: all {attempted} units failed")
 
 
 class UnitQualityError(ValueError):
@@ -105,17 +157,16 @@ class UnitStats:
 
 def run_units(conn, job: str, units: Iterable[tuple[int, str, str]],
               process: Callable[[int, str], tuple[int, int]], budget: Budget,
-              cache: dict, log_prefix: str, stats: UnitStats | None = None) -> UnitStats:
+              cache: dict, log_prefix: str) -> UnitStats:
     """Run (roc_year, school_code, url) units, each in its own savepoint.
 
-    process(roc, code) -> (rows_written, rows_skipped). Pass the same `stats` across
-    calls to share budget/busy accounting. BusyError stops the loop (stats.busy) once
-    something has succeeded, else is re-raised. UnknownSchoolError aborts the job;
-    any other error records the unit as failed and continues.
+    process(roc, code) -> (rows_written, rows_skipped). BusyError stops the loop
+    (stats.busy) once something has succeeded, else is re-raised. UnknownSchoolError
+    aborts the job; any other error records the unit as failed and continues.
     """
     from collegedata.jobs.uac import UnknownSchoolError  # uac imports this module
 
-    st = stats or UnitStats()
+    st = UnitStats()
     for roc, code, url in units:
         if budget.exhausted(st.processed):
             break

@@ -85,7 +85,7 @@ def test_busy_on_detail_page_stops_without_failing(db, httpx_mock):
     httpx_mock.add_response(url=SYS + "TotalGsdShow.htm", text=TOTAL, is_reusable=True)
     httpx_mock.add_response(url=SYS + "ShowGsd.php", method="POST", text=ONE_CODE, is_reusable=True)
     httpx_mock.add_response(url=SYS + "html/115_001582.htm?v=1.0", text="流量過大，請稍後再試。", is_reusable=True)
-    r = run_job(_job(max_schools=3), db)   # runner 會重試一次，mock 需可重用
+    r = run_job(_job(max_schools=3), db)   # cac jobs are not retried by the runner
     assert r.status == "failed"   # 嘗試 1 所、成功 0 所
     assert db.execute("select count(*) from cac_fetch").fetchone() == (0,)
 
@@ -115,3 +115,65 @@ def test_partial_skip_school_is_done_with_rows_skipped(db, httpx_mock):
     r = run_job(_job(max_schools=1), db)
     assert r.status == "success" and r.rows_written == 1
     assert db.execute("select status, rows_written, rows_skipped from cac_fetch where school_code='001'").fetchone() == ("done", 1, 1)
+
+
+def test_unknown_school_in_total_fails_before_any_detail_request(db, httpx_mock):
+    httpx_mock.add_response(url=query_url(115), text=QUERY)
+    httpx_mock.add_response(url=SYS + "TotalGsdShow.htm", text=TOTAL + "(999)不存在大學 -3系(組)")
+    r = run_job(_job(), db)
+    assert r.status == "failed" and "UnknownSchoolError" in r.error and "不存在大學" in r.error
+    assert [q.method for q in httpx_mock.get_requests()] == ["GET", "GET"]
+
+
+def test_empty_total_fails_job(db, httpx_mock):
+    httpx_mock.add_response(url=query_url(115), text=QUERY)
+    httpx_mock.add_response(url=SYS + "TotalGsdShow.htm", text="<html>改版了</html>")
+    r = run_job(_job(), db)
+    assert r.status == "failed" and "ValueError" in r.error and "no schools" in r.error
+
+
+def test_detail_page_http_error_fails_unit(db, httpx_mock):
+    httpx_mock.add_response(url=query_url(115), text=QUERY)
+    httpx_mock.add_response(url=SYS + "TotalGsdShow.htm", text=TOTAL)
+    httpx_mock.add_response(url=SYS + "ShowGsd.php", method="POST", text=ONE_CODE)
+    httpx_mock.add_response(url=SYS + "html/115_001582.htm?v=1.0", status_code=404)
+    r = run_job(_job(max_schools=1), db)
+    assert r.status == "failed" and "all 1 units failed" in r.error
+    status, error = db.execute("select status, error from cac_fetch where school_code='001'").fetchone()
+    assert status == "failed" and "HTTPStatusError" in error
+
+
+def test_empty_code_list_fails_unit(db, httpx_mock):
+    httpx_mock.add_response(url=query_url(115), text=QUERY)
+    httpx_mock.add_response(url=SYS + "TotalGsdShow.htm", text=TOTAL)
+    httpx_mock.add_response(url=SYS + "ShowGsd.php", method="POST", text="<html>查無資料</html>")
+    r = run_job(_job(max_schools=1), db)
+    assert r.status == "failed"
+    status, error = db.execute("select status, error from cac_fetch where school_code='001'").fetchone()
+    assert status == "failed" and "ValueError" in error and "no department codes" in error
+
+
+def test_requirement_keys_match_spec():
+    from collegedata.jobs.cac_rules import requirement_from_page
+    from collegedata.parsers.cac_rules import parse_rules_page
+    p = parse_rules_page(PAGE)
+    p.thresholds["國文"] = " 前 標"
+    p.thresholds["英聽"] = "a"
+    p.thresholds["社會"] = "--"
+    req = requirement_from_page(p, "u")
+    assert list(req["multipliers"]) == ["國文", "英文", "數學A", "數學B", "社會", "自然", "學測科目組合"]
+    assert list(req["thresholds"]) == ["國文", "英文", "數學A", "數學B", "社會", "自然", "英聽"]
+    assert req["thresholds"]["國文"] == "前標" and req["thresholds"]["英聽"] == "A" and req["thresholds"]["社會"] is None
+    assert req["thresholds"]["英文"] == "頂標" and req["multipliers"]["數學A"] == "2.5"
+
+
+def test_failed_school_waits_behind_never_attempted(db, httpx_mock):
+    db.execute("""insert into cac_fetch (job, roc_year, school_code, url, status, attempts, fetched_at)
+                  values ('cac_rules', 115, '001', 'u', 'failed', 1, now())""")
+    httpx_mock.add_response(url=query_url(115), text=QUERY)
+    httpx_mock.add_response(url=SYS + "TotalGsdShow.htm", text=TOTAL)
+    httpx_mock.add_response(url=SYS + "ShowGsd.php", method="POST", text=ONE_CODE)
+    httpx_mock.add_response(url=SYS + "html/115_001582.htm?v=1.0", text=PAGE)
+    run_job(_job(max_schools=1), db)
+    post = next(q for q in httpx_mock.get_requests() if q.method == "POST")
+    assert b"TxtGsdCode=002" in post.content

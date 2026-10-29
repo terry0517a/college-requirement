@@ -134,6 +134,7 @@
     rows_written int,
     rows_skipped int,
     error text,
+    attempts int not null default 0,  -- 每次結果（done 或 failed）加 1
     fetched_at timestamptz not null,
     unique (job, roc_year, school_code)
   );
@@ -143,8 +144,8 @@
 
 - 一所學校在一個學年是最小工作單位。`cac_sieve`：一張圖；`cac_rules`：一所學校的全部校系頁。
 - 單位完成後，在同一個交易內寫入資料列與 `cac_fetch` 一筆 `done`；任何例外則回滾該單位、寫 `failed` 與錯誤訊息，繼續下一所。
-- `done` 的單位永不重做。`failed` 的單位下次執行會重試。
-- 執行結束時若「嘗試 ≥ 1 所且成功 0 所」則 job 失敗（開 Issue）；否則成功，回傳本次寫入列數。兩個 job 都設 `row_count_guard = False`。
+- `done` 的單位永不重做。`failed` 的單位下次執行會重試，但排在從未嘗試的單位之後；`cac_fetch.attempts` 每次結果加 1，累計失敗 3 次的單位不再自動重試，直到手動刪除該筆紀錄（同時歸零）。
+- 執行結束時若「嘗試 ≥ 1 所且成功 0 所」則 job 失敗（開 Issue，但保留各單位的 `failed` 紀錄與嘗試次數）；否則成功，回傳本次寫入列數。兩個 job 都設 `row_count_guard = False`、`retryable = False`（runner 不整次重試）；開始下載前先比對清單上的所有校名，有未知校名立即失敗。
 
 ## 6. 篩選標準 job（`cac_sieve`）
 
@@ -152,7 +153,7 @@
 
 - 篩選結果約每年 4 月初公告。`target_years(today)`：若今天 ≥ 5 月 1 日，`cur = 西元年 − 1911`，否則 `cur = 西元年 − 1912`；回傳 `[cur, cur−1, cur−2]`。
 - 對每個學年先抓 `collegeList.htm` 取得校碼清單（每次執行每學年一次）。最新學年索引頁 404 視為失敗（5 月後理應存在）；較舊學年 404 記警告並跳過。
-- 待辦單位 = 清單中尚未 `done` 的 (學年, 校碼)，最新學年優先，再依校碼。
+- 待辦單位 = 清單中尚未 `done`、也未失敗滿 3 次的 (學年, 校碼)：從未嘗試的單位優先，其次是失敗過的；兩組內各自最新學年優先，再依清單順序。
 
 ### 6.2 圖片解析（`parsers/cac_sieve.py`，純函式，輸入 PNG bytes，輸出列的 dataclass 清單與跳過統計）
 
@@ -194,7 +195,7 @@
 
 - `pipeline.yml` 新增兩個排程：`cac_sieve` 每週五 03:00 UTC、`cac_rules` 每週六 03:00 UTC；`workflow_dispatch` 的 `job` 選項加入兩者，並新增可選輸入 `max_schools`、`time_budget_minutes`（對應環境變數）。
 - 依賴：`rapidocr-onnxruntime`（已確認可在 linux x86_64 / Python 3.12 解析安裝，連帶 onnxruntime、opencv-python、numpy、pillow）。不需 apt 套件。
-- 預設額度下單次執行上限：下載 10 張圖 ≈ 70 分鐘（節流速度）＋ OCR 10 張 ≈ 15–25 分鐘，在 `timeout-minutes: 120` 內；時間額度 75 分鐘保證在逾時前結束。初次載入三個學年約 195 張圖，可用手動執行（`max_schools=30`、`time_budget_minutes=100`）多跑幾次，或等每週排程累積（約 20 週）。
+- 預設額度下單次執行上限：下載 10 張圖 ≈ 70 分鐘（節流速度）＋ OCR 10 張 ≈ 15–25 分鐘，在 `timeout-minutes: 120` 內；時間額度 75 分鐘保證在逾時前結束；`CAC_TIME_BUDGET_MINUTES` 上限 90（超過則降為 90 並記警告）。初次載入三個學年約 195 張圖，建議手動執行並設 `time_budget_minutes=90` 多跑幾次：通常先用完的是時間額度而非 `max_schools`（約 5 KB/s 下一張圖 6–7 分鐘，每次約 10–13 張，約 15–20 次），或等每週排程累積（約 20 週）。失敗項目查詢：`select job, roc_year, school_code, status, attempts, error from cac_fetch where status = 'failed' order by roc_year desc, school_code;`。
 - `docs/deploy.md`：加入兩個 job 的說明、初次載入做法、`cac_fetch` 清除方式（`delete from cac_fetch where job = … and roc_year = …` 可強制重抓）。
 
 ## 9. 測試策略

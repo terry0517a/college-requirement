@@ -12,6 +12,7 @@ create table cac_fetch (
   rows_written int,
   rows_skipped int,
   error text,
+  attempts int not null default 0,  -- every outcome (done or failed) adds 1
   fetched_at timestamptz not null,
   unique (job, roc_year, school_code)
 );

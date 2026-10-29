@@ -32,8 +32,8 @@
 | `openalex` | `0 4 * * 2` | 每週二 04:00（UTC）；每次最多處理 800 所學校（可用環境變數 `OPENALEX_BATCH_SIZE` 調整），依 `openalex_checked_at` 最舊者優先輪替（尚未檢查過的學校最先），逐週輪替（全部學校約一個月輪完一遍）；遇到 HTTP 429（免費額度用完）即停止並保留已寫入的資料，下次執行接續；若一批內每個請求都失敗，job 會失敗並自動開 Issue |
 | `uac` | `0 5 * * 3` | 每週三 05:00（UTC）；每次重新下載最近三個學年的 PDF，放榜後的新年度會自動納入 |
 | `scorecard` | `0 6 * * 4` | 每週四 06:00（UTC）；每次重抓最新三個資料年，每次約 16 頁請求加最多 6 次年度探測 |
-| `cac_sieve` | `0 3 * * 5` | 每週五 03:00（UTC）；甄選會「篩選標準」圖片 OCR。額度制：每次最多處理 10 所學校、最長 75 分鐘（`CAC_MAX_SCHOOLS`、`CAC_TIME_BUDGET_MINUTES`），已完成的學校／學年記在 `cac_fetch`，累積完成、不重抓。初次載入請到 Actions 手動執行並設 `max_schools=30`、`time_budget_minutes=100` 多跑幾次：三個學年約 195 張圖，每次 30 所 → 約 7 次 |
-| `cac_rules` | `0 3 * * 6` | 每週六 03:00（UTC）；當年度校系分則頁面。同為額度制、累積完成；初次載入同樣手動設 `max_schools=30`、`time_budget_minutes=100`：約 64 所，每次 30 所 → 約 3 次 |
+| `cac_sieve` | `0 3 * * 5` | 每週五 03:00（UTC）；甄選會「篩選標準」圖片 OCR。額度制：每次最多處理 10 所學校、最長 75 分鐘（`CAC_MAX_SCHOOLS`、`CAC_TIME_BUDGET_MINUTES`；時間額度上限 90 分鐘，設更大會被降為 90），已完成的學校／學年記在 `cac_fetch`，累積完成、不重抓。初次載入請到 Actions 手動執行並設 `time_budget_minutes=90` 多跑幾次（`max_schools` 可設 30，但通常先用完的是時間額度：圖片下載約 5 KB/s，一張圖 6–7 分鐘，每次約 10–13 張）：三個學年約 195 張圖 → 約 15–20 次 |
+| `cac_rules` | `0 3 * * 6` | 每週六 03:00（UTC）；當年度校系分則頁面。同為額度制、累積完成；初次載入同樣手動設 `max_schools=30`、`time_budget_minutes=90`：約 64 所，每頁間隔 3 秒、一所約 70 頁（約 4 分鐘），每次約 20–25 所 → 約 3 次 |
 
 兩個 cac job 不需要額外 secret，只用 `DATABASE_URL`。
 
@@ -43,6 +43,12 @@
 
 ```sql
 delete from cac_fetch where job = 'cac_sieve' and roc_year = 115;
+```
+
+失敗（`failed`）的學校會在之後的執行重試，但排在從未嘗試過的學校之後；`attempts` 欄記錄嘗試次數，同一學校／學年累計 3 次仍失敗就不再自動重試。修好原因後（例如補了 `tw_institutions.csv`、或解析器已修正），刪除該筆紀錄即可讓它重新排入（嘗試次數也一併歸零）。查看目前失敗的項目：
+
+```sql
+select job, roc_year, school_code, status, attempts, error from cac_fetch where status = 'failed' order by roc_year desc, school_code;
 ```
 
 甄選會網站回「流量過大」時，job 會提早結束：只要本次至少有一所學校成功，就不算失敗，下次排程接續；若一所都沒成功，job 失敗並自動開 Issue。

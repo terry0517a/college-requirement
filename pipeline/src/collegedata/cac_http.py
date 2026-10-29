@@ -48,12 +48,15 @@ class CacFetcher:
         self.requests_made = 0
 
     def _throttle(self) -> None:
+        """Wait until min_interval has passed since the previous request finished."""
         if self._last_request is not None:
             wait = self.min_interval - (self._clock() - self._last_request)
             if wait > 0:
                 self._sleep(wait)
-        self._last_request = self._clock()
         self.requests_made += 1
+
+    def _finished(self) -> None:
+        self._last_request = self._clock()
 
     def _checked(self, url: str, response: httpx.Response) -> httpx.Response:
         if response.status_code in BUSY_STATUSES or BUSY_MARKER in response.text:
@@ -62,19 +65,27 @@ class CacFetcher:
 
     def get(self, url: str) -> httpx.Response:
         self._throttle()
-        return self._checked(url, self.client.get(url))
+        try:
+            return self._checked(url, self.client.get(url))
+        finally:
+            self._finished()
 
     def post(self, url: str, data: dict) -> httpx.Response:
         self._throttle()
-        return self._checked(url, self.client.post(url, data=data))
+        try:
+            return self._checked(url, self.client.post(url, data=data))
+        finally:
+            self._finished()
 
     def download(self, url: str, max_attempts: int = 6) -> bytes:
         buf = bytearray()
         last_error: Exception | None = None
         for attempt in range(1, max_attempts + 1):
             self._throttle()
+            # identity: Range offsets and Content-Range totals refer to the raw bytes we store
+            headers = {"Range": f"bytes={len(buf)}-", "Accept-Encoding": "identity"}
             try:
-                with self.client.stream("GET", url, headers={"Range": f"bytes={len(buf)}-"}) as resp:
+                with self.client.stream("GET", url, headers=headers) as resp:
                     if resp.status_code in BUSY_STATUSES:
                         raise BusyError(url)
                     if resp.status_code == 416 and buf:
@@ -94,6 +105,8 @@ class CacFetcher:
                     last_error = httpx.ReadError(f"incomplete download of {url}: {len(buf)}/{expected} bytes")
             except httpx.TransportError as exc:
                 last_error = exc
+            finally:
+                self._finished()
             log.warning("download of %s incomplete (attempt %d/%d, %d bytes so far): %s",
                         url, attempt, max_attempts, len(buf), last_error)
         assert last_error is not None

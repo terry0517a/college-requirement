@@ -80,6 +80,7 @@ def test_busy_stops_run_but_keeps_finished_schools(db, httpx_mock):
     httpx_mock.add_response(url=college_list_url(115), text=LIST)
     httpx_mock.add_response(url=image_url(115, "001"), content=b"png")
     httpx_mock.add_response(url=image_url(115, "002"), text="流量過大，請稍後再試。")
+    for roc in (114, 113): httpx_mock.add_response(url=college_list_url(roc), status_code=404)
     r = run_job(_job(max_schools=5), db)
     assert r.status == "success"
     assert db.execute("select status from cac_fetch where school_code='001'").fetchone() == ("done",)
@@ -182,6 +183,7 @@ def test_busy_before_any_success_fails_job(db, httpx_mock):
 def test_busy_on_first_unit_fails_job(db, httpx_mock):
     httpx_mock.add_response(url=college_list_url(115), text=LIST, is_reusable=True)
     httpx_mock.add_response(url=image_url(115, "001"), status_code=503, is_reusable=True)
+    for roc in (114, 113): httpx_mock.add_response(url=college_list_url(roc), status_code=404)
     r = run_job(_job(), db)
     assert r.status == "failed" and "BusyError" in r.error
 
@@ -222,3 +224,94 @@ def test_gender_suffix_applied_once_by_job(db, httpx_mock):
     assert r.status == "success" and r.rows_written == 2
     names = [x[0] for x in db.execute("select name_zh from program order by name_zh").fetchall()]
     assert names == ["戲劇學系(女)", "戲劇學系(男)"]
+
+
+def _mock_older_404(httpx_mock):
+    for roc in (114, 113): httpx_mock.add_response(url=college_list_url(roc), status_code=404, is_reusable=True)
+
+
+def test_unknown_school_in_list_fails_before_any_download(db, httpx_mock):
+    httpx_mock.add_response(url=college_list_url(115), text=_list_html("001") + '<a href="report/999.htm">(999)不存在大學</a>')
+    r = run_job(_job(), db)
+    assert r.status == "failed" and "UnknownSchoolError" in r.error and "不存在大學" in r.error
+    assert not any(q.url.path.endswith(".png") for q in httpx_mock.get_requests())
+
+
+def test_empty_college_list_fails_job(db, httpx_mock):
+    httpx_mock.add_response(url=college_list_url(115), text="<html>改版了</html>")
+    r = run_job(_job(), db)
+    assert r.status == "failed" and "ValueError" in r.error and "no schools" in r.error
+
+
+def test_budget_built_once_per_job_instance(db, httpx_mock, monkeypatch):
+    calls = []
+    real = Budget.from_env
+    monkeypatch.setattr(Budget, "from_env", classmethod(lambda cls, clock=None: calls.append(1) or real()))
+    httpx_mock.add_response(url=college_list_url(115), status_code=404, is_reusable=True)
+    now, sleep = _clock()
+    job = CacSieveJob(today=TODAY, parse=fake_parse, fetcher=CacFetcher(httpx.Client(), min_interval=0, sleep=sleep, clock=now))
+    run_job(job, db)
+    first = job.budget
+    run_job(job, db)
+    assert len(calls) == 1 and job.budget is first
+
+
+def _attempts(db, code="001", roc=115):
+    return db.execute("select status, attempts from cac_fetch where job='cac_sieve' and roc_year=%s and school_code=%s",
+                      (roc, code)).fetchone()
+
+
+def test_attempts_count_every_outcome(db, httpx_mock):
+    outcomes = iter([ValueError("x"), ValueError("y"), None])
+    def flaky(png, school_code, ocr=None):
+        e = next(outcomes)
+        if e: raise e
+        return fake_parse(png, school_code)
+    httpx_mock.add_response(url=college_list_url(115), text=_list_html("001"), is_reusable=True)
+    httpx_mock.add_response(url=image_url(115, "001"), content=b"png", is_reusable=True)
+    _mock_older_404(httpx_mock)
+    for expected in [("failed", 1), ("failed", 2), ("done", 3)]:
+        run_job(_job(parse=flaky), db)
+        assert _attempts(db) == expected
+
+
+def _seed(db, code, status, attempts, roc=115):
+    db.execute("""insert into cac_fetch (job, roc_year, school_code, url, status, attempts, fetched_at)
+                  values ('cac_sieve', %s, %s, 'u', %s, %s, now())""", (roc, code, status, attempts))
+
+
+def test_exhausted_unit_is_not_retried(db, httpx_mock):
+    from collegedata.jobs.cac_common import exhausted_units
+    _seed(db, "001", "failed", 3)
+    _seed(db, "002", "failed", 2)
+    assert exhausted_units(db, "cac_sieve", 115) == {"001"}
+    httpx_mock.add_response(url=college_list_url(115), text=_list_html("001", "002"))
+    httpx_mock.add_response(url=image_url(115, "002"), content=b"png")
+    _mock_older_404(httpx_mock)
+    r = run_job(_job(), db)
+    assert r.status == "success"
+    assert [q.url.path.split("/")[-1] for q in httpx_mock.get_requests() if q.url.path.endswith(".png")] == ["002.png"]
+    assert _attempts(db, "001") == ("failed", 3)
+
+
+def test_never_attempted_units_before_failed_ones(db, httpx_mock):
+    _seed(db, "001", "failed", 1)
+    _seed(db, "003", "failed", 1, roc=114)
+    httpx_mock.add_response(url=college_list_url(115), text=_list_html("001", "002"))
+    httpx_mock.add_response(url=college_list_url(114), text=_list_html("003", "004"))
+    httpx_mock.add_response(url=college_list_url(113), status_code=404)
+    for roc, c in ((115, "001"), (115, "002"), (114, "003"), (114, "004")):
+        httpx_mock.add_response(url=image_url(roc, c), content=b"png")
+    run_job(_job(max_schools=4), db)
+    order = [str(q.url).split("/apply_his_report/")[1][:3] + "/" + q.url.path.split("/")[-1]
+             for q in httpx_mock.get_requests() if q.url.path.endswith(".png")]
+    assert order == ["115/002.png", "114/004.png", "115/001.png", "114/003.png"]
+
+
+def test_time_budget_is_clamped_to_90_minutes(monkeypatch, caplog):
+    monkeypatch.setenv("CAC_TIME_BUDGET_MINUTES", "100")
+    b = Budget.from_env()
+    assert b.time_budget == datetime.timedelta(minutes=90)
+    assert "clamped" in caplog.text
+    monkeypatch.setenv("CAC_TIME_BUDGET_MINUTES", "60")
+    assert Budget.from_env().time_budget == datetime.timedelta(minutes=60)
