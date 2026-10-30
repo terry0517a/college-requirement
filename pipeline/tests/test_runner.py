@@ -62,3 +62,28 @@ def test_row_count_drop_is_not_retried(db):
     job = FakeJob(rows=40)
     r = run_job(job, db)
     assert r.status == "failed" and "RowCountDropped" in r.error and job.calls == 1
+
+def test_non_retryable_job_runs_once(db):
+    class OneShotJob(FakeJob):
+        retryable = False
+    job = OneShotJob(rows=5, fail_times=1)
+    r = run_job(job, db)
+    assert r.status == "failed" and "boom" in r.error and job.calls == 1
+
+def test_cac_jobs_are_not_retried():
+    from collegedata.jobs.cac_rules import CacRulesJob
+    from collegedata.jobs.cac_sieve import CacSieveJob
+    assert CacSieveJob.retryable is False and CacRulesJob.retryable is False
+
+def test_keep_writes_failure_keeps_job_writes(db):
+    class Progress(RuntimeError):
+        keep_writes = True
+    class ProgressJob:
+        name = "fake"
+        retryable = False
+        def run(self, conn):
+            conn.execute("insert into source(code,name,url) values('tmp','t','u')")
+            raise Progress("all units failed")
+    r = run_job(ProgressJob(), db)
+    assert r.status == "failed" and "Progress: all units failed" in r.error
+    assert db.execute("select count(*) from source where code='tmp'").fetchone()[0] == 1

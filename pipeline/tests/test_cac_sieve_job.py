@@ -1,0 +1,317 @@
+# tests/test_cac_sieve_job.py
+import datetime, pathlib
+from decimal import Decimal
+import httpx
+from collegedata.cac_http import CacFetcher
+from collegedata.parsers.cac_sieve import SieveRow, SieveLevel, SieveParseResult
+from collegedata.jobs.cac_sieve import CacSieveJob, target_years, parse_college_list, college_list_url, image_url
+from collegedata.jobs.cac_common import Budget
+from collegedata.runner import run_job
+
+FIX = pathlib.Path(__file__).with_name("fixtures") / "cac"
+LIST = (FIX / "115_collegeList.htm").read_text(encoding="utf-8")
+TODAY = datetime.date(2026, 10, 29)
+
+def _row(code, name, gender=None, quota=23, school="001"):
+    return SieveRow(school, code, gender, name, quota, "一般校系",
+                    {"國文": "前標", "英文": "均標", "數學A": None, "數學B": None, "社會": None, "自然": None, "英聽": None},
+                    {"國文": Decimal("3"), "英文": None, "數學A": None, "數學B": None, "社會": None, "自然": None, "學測科目組合": None},
+                    {}, [SieveLevel(1, "社會10", ["社會"], Decimal("10"))], True, [])
+
+def fake_parse(png, school_code, ocr=None):
+    if school_code == "001":
+        return SieveParseResult([_row("001012", "中國文學系"), _row("001082", "戲劇學系", "男", 8), _row("001082", "戲劇學系", "女", 9)], 0, [], ["一般校系"])
+    return SieveParseResult([_row(school_code + "012", "某學系", school=school_code)], 0, [], ["一般校系"])
+
+def _clock():
+    t = [0.0]
+    def now(): return t[0]
+    def sleep(s): t[0] += s
+    return now, sleep
+
+def _job(**kw):
+    now, sleep = _clock()
+    f = CacFetcher(httpx.Client(), min_interval=0, sleep=sleep, clock=now)
+    return CacSieveJob(today=TODAY, parse=kw.pop("parse", fake_parse), fetcher=f, budget=Budget(max_schools=kw.pop("max_schools", 10), time_budget=datetime.timedelta(minutes=75), started=0.0, clock=now), **kw)
+
+def _mock_year(httpx_mock, roc, html=LIST, pngs=("001",)):
+    httpx_mock.add_response(url=college_list_url(roc), text=html, is_reusable=True)
+    for c in pngs:
+        httpx_mock.add_response(url=image_url(roc, c), content=b"png", is_reusable=True)
+
+def test_target_years_roll_on_may_first():
+    assert target_years(datetime.date(2027, 4, 30)) == [115, 114, 113]
+    assert target_years(datetime.date(2027, 5, 1)) == [116, 115, 114]
+
+def test_parse_college_list():
+    lst = parse_college_list(LIST)
+    assert len(lst) == 64 and lst[0] == ("001", "國立臺灣大學")
+
+def test_writes_programs_requirement_and_sieve(db, httpx_mock):
+    _mock_year(httpx_mock, 115, pngs=("001", "002"))
+    for roc in (114, 113):
+        _mock_year(httpx_mock, roc, pngs=())
+    r = run_job(_job(max_schools=2), db)
+    assert r.status == "success" and r.rows_written == 4
+    rows = db.execute("""select p.name_zh, q.requirement, s.sieve, s.tiebreak, q.year, q.pathway, q.system_code
+                         from admission_requirement q join program p on p.id = q.program_id
+                         join admission_stat s on s.program_id = q.program_id and s.year = q.year and s.pathway = q.pathway
+                         order by p.name_zh""").fetchall()
+    assert [x[0] for x in rows] == ["中國文學系", "某學系", "戲劇學系(女)", "戲劇學系(男)"]
+    req = rows[0][1]
+    assert req["cac_code"] == "001012" and req["quota"] == 23 and req["thresholds"]["國文"] == "前標"
+    assert req["sources"]["sieve_image"] == image_url(115, "001")
+    assert rows[0][2] == [{"order": 1, "label": "社會10", "subjects": ["社會"], "min_score": "10"}]
+    assert rows[0][3] == "同級分超額篩選" and rows[0][4:] == (2026, "tw_apply", "tw_gsat")
+    done = db.execute("select roc_year, school_code, status, rows_written from cac_fetch order by roc_year desc, school_code").fetchall()
+    assert done == [(115, "001", "done", 3), (115, "002", "done", 1)]   # 額度 2 所，最新學年優先
+
+def test_done_units_are_not_refetched(db, httpx_mock):
+    _mock_year(httpx_mock, 115, pngs=("001", "002", "003", "004"))
+    for roc in (114, 113):
+        _mock_year(httpx_mock, roc, pngs=())
+    run_job(_job(max_schools=2), db)
+    n_before = len(httpx_mock.get_requests())
+    run_job(_job(max_schools=2), db)
+    image_requests = [q for q in httpx_mock.get_requests()[n_before:] if q.url.path.endswith(".png")]
+    assert {q.url.path.split("/")[-1] for q in image_requests} == {"003.png", "004.png"}
+
+def test_busy_stops_run_but_keeps_finished_schools(db, httpx_mock):
+    httpx_mock.add_response(url=college_list_url(115), text=LIST)
+    httpx_mock.add_response(url=image_url(115, "001"), content=b"png")
+    httpx_mock.add_response(url=image_url(115, "002"), text="流量過大，請稍後再試。")
+    for roc in (114, 113): httpx_mock.add_response(url=college_list_url(roc), status_code=404)
+    r = run_job(_job(max_schools=5), db)
+    assert r.status == "success"
+    assert db.execute("select status from cac_fetch where school_code='001'").fetchone() == ("done",)
+    assert db.execute("select count(*) from cac_fetch where school_code='002'").fetchone() == (0,)
+    assert not any(q.url.path.endswith("003.png") for q in httpx_mock.get_requests())
+
+def test_parse_failure_marks_unit_failed_and_continues(db, httpx_mock):
+    def bad_parse(png, school_code, ocr=None):
+        if school_code == "001": raise ValueError("no table")
+        return fake_parse(png, school_code)
+    _mock_year(httpx_mock, 115, pngs=("001", "002"))
+    for roc in (114, 113): httpx_mock.add_response(url=college_list_url(roc), status_code=404)
+    r = run_job(_job(max_schools=2, parse=bad_parse), db)
+    assert r.status == "success" and r.rows_written == 1
+    assert db.execute("select status, error from cac_fetch where school_code='001'").fetchone()[0] == "failed"
+    assert "ValueError" in db.execute("select error from cac_fetch where school_code='001'").fetchone()[0]
+
+def test_all_units_failed_fails_job(db, httpx_mock):
+    def bad_parse(png, school_code, ocr=None): raise ValueError("x")
+    _mock_year(httpx_mock, 115, pngs=("001",))
+    for roc in (114, 113): httpx_mock.add_response(url=college_list_url(roc), status_code=404, is_reusable=True)
+    r = run_job(_job(max_schools=1, parse=bad_parse), db)
+    assert r.status == "failed" and "all 1 units failed" in r.error
+
+def test_newest_year_404_fails(db, httpx_mock):
+    httpx_mock.add_response(url=college_list_url(115), status_code=404, is_reusable=True)
+    r = run_job(_job(), db)
+    assert r.status == "failed" and "404" in r.error
+
+def test_high_skip_ratio_fails_unit(db, httpx_mock):
+    def skippy(png, school_code, ocr=None): return SieveParseResult([_row("001012", "中國文學系")], 1, ["skip"], ["一般校系"])
+    _mock_year(httpx_mock, 115, pngs=("001",))
+    for roc in (114, 113): httpx_mock.add_response(url=college_list_url(roc), status_code=404, is_reusable=True)
+    r = run_job(_job(max_schools=1, parse=skippy), db)
+    assert r.status == "failed"
+    assert db.execute("select count(*) from admission_stat").fetchone() == (0,)
+
+def test_rerun_merges_requirement_keeping_other_sources(db, httpx_mock):
+    from collegedata.jobs.cac_common import merge_requirement
+    _mock_year(httpx_mock, 115, pngs=("001",))
+    for roc in (114, 113): httpx_mock.add_response(url=college_list_url(roc), status_code=404, is_reusable=True)
+    run_job(_job(max_schools=1), db)
+    pid, sid = db.execute("select p.id, p.source_id from program p where name_zh='中國文學系'").fetchone()
+    merge_requirement(db, pid, 2026, {"stage2": {"stage1_pct": 20}, "sources": {"rules_page": "http://r"}}, sid, "http://r")
+    req = db.execute("select requirement from admission_requirement where program_id=%s", (pid,)).fetchone()[0]
+    assert req["stage2"] == {"stage1_pct": 20} and req["quota"] == 23
+    assert req["sources"] == {"sieve_image": image_url(115, "001"), "rules_page": "http://r"}
+
+def test_registered_in_runner():
+    from collegedata.runner import REGISTRY
+    assert "cac_sieve" in REGISTRY
+
+
+def test_budget_from_env_treats_empty_as_unset(monkeypatch):
+    monkeypatch.setenv("CAC_MAX_SCHOOLS", "")
+    monkeypatch.setenv("CAC_TIME_BUDGET_MINUTES", "")
+    b = Budget.from_env(clock=lambda: 5.0)
+    assert b.max_schools == 10 and b.time_budget == datetime.timedelta(minutes=75) and b.started == 5.0
+    monkeypatch.setenv("CAC_MAX_SCHOOLS", "3")
+    assert Budget.from_env().max_schools == 3
+
+
+def test_budget_exhausted_by_count_or_time():
+    b = Budget(2, datetime.timedelta(minutes=1), 0.0)
+    assert not b.exhausted(1, lambda: 59.0)
+    assert b.exhausted(2, lambda: 0.0)
+    assert b.exhausted(0, lambda: 60.0)
+
+
+def _list_html(*codes):
+    return "".join(f'<a href="report/{c}.htm">({c})國立臺灣大學</a>' for c in codes)
+
+
+def test_failed_unit_does_not_poison_institution_cache(db, httpx_mock):
+    calls = []
+    def flaky(png, school_code, ocr=None):
+        calls.append(school_code)
+        if len(calls) == 1:
+            bad = _row("001012", "中國文學系")
+            bad.extra = {"x": object()}   # not JSON serialisable: fails after institution/program were written
+            return SieveParseResult([bad], 0, [], ["一般校系"])
+        return fake_parse(png, school_code)
+    httpx_mock.add_response(url=college_list_url(115), text=_list_html("001"))
+    httpx_mock.add_response(url=college_list_url(114), text=_list_html("001"))
+    httpx_mock.add_response(url=college_list_url(113), status_code=404)
+    for roc in (115, 114):
+        httpx_mock.add_response(url=image_url(roc, "001"), content=b"png")
+    r = run_job(_job(max_schools=5, parse=flaky), db)
+    assert r.status == "success" and r.rows_written == 3
+    got = db.execute("select roc_year, status from cac_fetch order by roc_year desc").fetchall()
+    assert got == [(115, "failed"), (114, "done")]
+
+
+def test_busy_before_any_success_fails_job(db, httpx_mock):
+    httpx_mock.add_response(url=college_list_url(115), status_code=503, is_reusable=True)
+    r = run_job(_job(), db)
+    assert r.status == "failed" and "BusyError" in r.error
+
+
+def test_busy_on_first_unit_fails_job(db, httpx_mock):
+    httpx_mock.add_response(url=college_list_url(115), text=LIST, is_reusable=True)
+    httpx_mock.add_response(url=image_url(115, "001"), status_code=503, is_reusable=True)
+    for roc in (114, 113): httpx_mock.add_response(url=college_list_url(roc), status_code=404)
+    r = run_job(_job(), db)
+    assert r.status == "failed" and "BusyError" in r.error
+
+
+def test_failed_unit_records_rows_skipped(db, httpx_mock):
+    def skippy(png, school_code, ocr=None):
+        if school_code != "001": return fake_parse(png, school_code)
+        return SieveParseResult([_row("001012", "中國文學系")], 1, [], ["一般校系"])
+    _mock_year(httpx_mock, 115, pngs=("001", "002"))
+    for roc in (114, 113): httpx_mock.add_response(url=college_list_url(roc), status_code=404, is_reusable=True)
+    run_job(_job(max_schools=2, parse=skippy), db)
+    assert db.execute("select status, rows_written, rows_skipped from cac_fetch where school_code='001'").fetchone() == ("failed", 0, 1)
+
+
+def test_zero_rows_parsed_is_failed_not_done(db, httpx_mock):
+    def empty(png, school_code, ocr=None):
+        if school_code != "001": return fake_parse(png, school_code)
+        return SieveParseResult([], 0, [], [])
+    _mock_year(httpx_mock, 115, pngs=("001", "002"))
+    for roc in (114, 113): httpx_mock.add_response(url=college_list_url(roc), status_code=404, is_reusable=True)
+    r = run_job(_job(max_schools=2, parse=empty), db)
+    assert r.status == "success"
+    assert db.execute("select status, error from cac_fetch where school_code='001'").fetchone() == ("failed", "UnitQualityError: no rows parsed")
+
+
+def test_literal_urls_for_115():
+    assert college_list_url(115) == "https://www.cac.edu.tw/cacportal/apply_his_report/115/115_sieve_standard/collegeList.htm"
+    assert image_url(115, "001") == "https://www.cac.edu.tw/cacportal/apply_his_report/115/115_sieve_standard/report/pict/001.png"
+
+
+def test_gender_suffix_applied_once_by_job(db, httpx_mock):
+    # rows exactly as the real parser emits them: unsuffixed name, gender in its own field
+    def real_shaped(png, school_code, ocr=None):
+        return SieveParseResult([_row("001082", "戲劇學系", "男", 8), _row("001082", "戲劇學系", "女", 9)], 0, [], ["一般校系"])
+    _mock_year(httpx_mock, 115, pngs=("001",))
+    for roc in (114, 113): httpx_mock.add_response(url=college_list_url(roc), status_code=404, is_reusable=True)
+    r = run_job(_job(max_schools=1, parse=real_shaped), db)
+    assert r.status == "success" and r.rows_written == 2
+    names = [x[0] for x in db.execute("select name_zh from program order by name_zh").fetchall()]
+    assert names == ["戲劇學系(女)", "戲劇學系(男)"]
+
+
+def _mock_older_404(httpx_mock):
+    for roc in (114, 113): httpx_mock.add_response(url=college_list_url(roc), status_code=404, is_reusable=True)
+
+
+def test_unknown_school_in_list_fails_before_any_download(db, httpx_mock):
+    httpx_mock.add_response(url=college_list_url(115), text=_list_html("001") + '<a href="report/999.htm">(999)不存在大學</a>')
+    r = run_job(_job(), db)
+    assert r.status == "failed" and "UnknownSchoolError" in r.error and "不存在大學" in r.error
+    assert not any(q.url.path.endswith(".png") for q in httpx_mock.get_requests())
+
+
+def test_empty_college_list_fails_job(db, httpx_mock):
+    httpx_mock.add_response(url=college_list_url(115), text="<html>改版了</html>")
+    r = run_job(_job(), db)
+    assert r.status == "failed" and "ValueError" in r.error and "no schools" in r.error
+
+
+def test_budget_built_once_per_job_instance(db, httpx_mock, monkeypatch):
+    calls = []
+    real = Budget.from_env
+    monkeypatch.setattr(Budget, "from_env", classmethod(lambda cls, clock=None: calls.append(1) or real()))
+    httpx_mock.add_response(url=college_list_url(115), status_code=404, is_reusable=True)
+    now, sleep = _clock()
+    job = CacSieveJob(today=TODAY, parse=fake_parse, fetcher=CacFetcher(httpx.Client(), min_interval=0, sleep=sleep, clock=now))
+    run_job(job, db)
+    first = job.budget
+    run_job(job, db)
+    assert len(calls) == 1 and job.budget is first
+
+
+def _attempts(db, code="001", roc=115):
+    return db.execute("select status, attempts from cac_fetch where job='cac_sieve' and roc_year=%s and school_code=%s",
+                      (roc, code)).fetchone()
+
+
+def test_attempts_count_every_outcome(db, httpx_mock):
+    outcomes = iter([ValueError("x"), ValueError("y"), None])
+    def flaky(png, school_code, ocr=None):
+        e = next(outcomes)
+        if e: raise e
+        return fake_parse(png, school_code)
+    httpx_mock.add_response(url=college_list_url(115), text=_list_html("001"), is_reusable=True)
+    httpx_mock.add_response(url=image_url(115, "001"), content=b"png", is_reusable=True)
+    _mock_older_404(httpx_mock)
+    for expected in [("failed", 1), ("failed", 2), ("done", 3)]:
+        run_job(_job(parse=flaky), db)
+        assert _attempts(db) == expected
+
+
+def _seed(db, code, status, attempts, roc=115):
+    db.execute("""insert into cac_fetch (job, roc_year, school_code, url, status, attempts, fetched_at)
+                  values ('cac_sieve', %s, %s, 'u', %s, %s, now())""", (roc, code, status, attempts))
+
+
+def test_exhausted_unit_is_not_retried(db, httpx_mock):
+    from collegedata.jobs.cac_common import exhausted_units
+    _seed(db, "001", "failed", 3)
+    _seed(db, "002", "failed", 2)
+    assert exhausted_units(db, "cac_sieve", 115) == {"001"}
+    httpx_mock.add_response(url=college_list_url(115), text=_list_html("001", "002"))
+    httpx_mock.add_response(url=image_url(115, "002"), content=b"png")
+    _mock_older_404(httpx_mock)
+    r = run_job(_job(), db)
+    assert r.status == "success"
+    assert [q.url.path.split("/")[-1] for q in httpx_mock.get_requests() if q.url.path.endswith(".png")] == ["002.png"]
+    assert _attempts(db, "001") == ("failed", 3)
+
+
+def test_never_attempted_units_before_failed_ones(db, httpx_mock):
+    _seed(db, "001", "failed", 1)
+    _seed(db, "003", "failed", 1, roc=114)
+    httpx_mock.add_response(url=college_list_url(115), text=_list_html("001", "002"))
+    httpx_mock.add_response(url=college_list_url(114), text=_list_html("003", "004"))
+    httpx_mock.add_response(url=college_list_url(113), status_code=404)
+    for roc, c in ((115, "001"), (115, "002"), (114, "003"), (114, "004")):
+        httpx_mock.add_response(url=image_url(roc, c), content=b"png")
+    run_job(_job(max_schools=4), db)
+    order = [str(q.url).split("/apply_his_report/")[1][:3] + "/" + q.url.path.split("/")[-1]
+             for q in httpx_mock.get_requests() if q.url.path.endswith(".png")]
+    assert order == ["115/002.png", "114/004.png", "115/001.png", "114/003.png"]
+
+
+def test_time_budget_is_clamped_to_90_minutes(monkeypatch, caplog):
+    monkeypatch.setenv("CAC_TIME_BUDGET_MINUTES", "100")
+    b = Budget.from_env()
+    assert b.time_budget == datetime.timedelta(minutes=90)
+    assert "clamped" in caplog.text
+    monkeypatch.setenv("CAC_TIME_BUDGET_MINUTES", "60")
+    assert Budget.from_env().time_budget == datetime.timedelta(minutes=60)

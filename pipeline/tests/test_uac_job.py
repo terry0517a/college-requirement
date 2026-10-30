@@ -56,6 +56,11 @@ def test_year_urls_yaml_override(monkeypatch):
                         lambda: [{"roc_year": 114, "url": "https://example.org/114.pdf"}])
     assert year_urls(TODAY) == [(115, U.format(115)), (114, "https://example.org/114.pdf"), (113, U.format(113))]
 
+def test_year_urls_before_september_uses_previous_roc_year(monkeypatch):
+    monkeypatch.setattr("collegedata.jobs.uac.load_years", lambda: [])
+    assert [y for y, _ in year_urls(datetime.date(2027, 8, 31))] == [115, 114, 113]
+    assert [y for y, _ in year_urls(datetime.date(2027, 9, 1))] == [116, 115, 114]
+
 def test_404_on_newest_year_fails(db, httpx_mock, monkeypatch):
     monkeypatch.setattr("collegedata.jobs.uac.load_years", lambda: [])
     httpx_mock.add_response(url=U.format(115), status_code=404, is_reusable=True)  # runner retries
