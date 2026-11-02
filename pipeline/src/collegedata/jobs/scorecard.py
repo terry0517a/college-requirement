@@ -194,6 +194,14 @@ def upsert_year(conn, inst_id: int, all_program_id: int, ys: YearStats, source_i
         )
 
 
+def _is_parameter_not_found(resp: httpx.Response) -> bool:
+    try:
+        errors = resp.json().get("errors") or []
+        return any(isinstance(e, dict) and e.get("error") == "parameter_not_found" for e in errors)
+    except (ValueError, AttributeError):
+        return False
+
+
 class ScorecardJob:
     name = "scorecard"
 
@@ -205,8 +213,12 @@ class ScorecardJob:
         self.limit = limit
         self._requested = False
 
-    def _get(self, client: httpx.Client, params: dict) -> httpx.Response:
+    def _get(self, client: httpx.Client, params: dict, *,
+             allow_missing_year: bool = False) -> httpx.Response | None:
         """One API request; fails on any non-2xx.
+
+        With allow_missing_year, an HTTP 400 parameter_not_found (the year is not released yet)
+        returns None instead of failing.
 
         Waits 1 s after the previous request made by this instance, including across the
         runner's retry (which reuses the instance), so the retry never follows a 429 at once.
@@ -215,6 +227,8 @@ class ScorecardJob:
             time.sleep(1)
         self._requested = True
         resp = client.get(SCORECARD_URL, params={**params, "api_key": self.api_key})
+        if allow_missing_year and resp.status_code == 400 and _is_parameter_not_found(resp):
+            return None
         if not resp.is_success:
             # httpx's own HTTPStatusError message embeds the full URL, API key included; the
             # ~4 KB fields list is dropped too, keeping only the page number.
@@ -228,7 +242,8 @@ class ScorecardJob:
         for y in range(start, start - MAX_PROBE_YEARS, -1):
             params = {**BASE_FILTER, f"{y}.admissions.admission_rate.overall__range": "0.0001..1",
                       "per_page": 1, "fields": "id"}
-            if (self._get(client, params).json().get("metadata") or {}).get("total", 0) > 0:
+            resp = self._get(client, params, allow_missing_year=True)
+            if resp is not None and (resp.json().get("metadata") or {}).get("total", 0) > 0:
                 return y
         raise ScorecardDataError(
             f"no admissions data for any year {start - MAX_PROBE_YEARS + 1}..{start}")
