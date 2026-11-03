@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import type { Locale } from '@/i18n/config'
 import type { Dictionary } from '@/i18n/dictionaries'
-import { formatDate, formatMoney } from '@/lib/format'
+import { formatDate, formatMoney, listSep } from '@/lib/format'
 import { displayName } from '@/lib/names'
 import type { ExploreItem } from '@/lib/queries/explore'
 import SourceNote from './SourceNote'
@@ -51,7 +51,7 @@ export default function InstitutionCard({
           .filter(Boolean)
           .join(' · ')}
       </p>
-      <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+      <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 [&_dd]:[overflow-wrap:anywhere] gap-y-1 text-sm">
         <dt className="text-subtle">{t.tuition}</dt>
         <dd>
           {tuition}
@@ -80,7 +80,7 @@ export default function InstitutionCard({
       {item.matchedPrograms.length > 0 && (
         <div className="mt-2 text-sm">
           <span className="text-subtle">{t.matchedPrograms}{locale === 'zh' ? '：' : ': '}</span>
-          {item.matchedPrograms.map((p) => displayName(locale, p.nameZh, p.nameEn)).join('、')}
+          {item.matchedPrograms.map((p) => displayName(locale, p.nameZh, p.nameEn)).join(listSep(locale))}
         </div>
       )}
       <div className="mt-3">
