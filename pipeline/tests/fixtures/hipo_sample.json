@@ -1,0 +1,5 @@
+[
+  {"state-province": null, "name": "National Taiwan University", "web_pages": ["http://www.ntu.edu.tw/"], "alpha_two_code": "TW", "domains": ["ntu.edu.tw"], "country": "Taiwan, Province of China"},
+  {"state-province": null, "name": "Aletheia University", "web_pages": ["http://www.au.edu.tw/"], "alpha_two_code": "TW", "domains": ["au.edu.tw"], "country": "Taiwan, Province of China"},
+  {"state-province": "California", "name": "Stanford University", "web_pages": ["http://www.stanford.edu/"], "alpha_two_code": "US", "domains": ["stanford.edu"], "country": "United States"}
+]
