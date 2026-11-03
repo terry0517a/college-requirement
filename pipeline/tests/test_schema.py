@@ -82,3 +82,25 @@ def test_cac_fetch_has_no_anon_policy(db):
 
 def test_cac_source_entry_loads(db):
     assert ensure_source(db, "cac") > 0
+
+
+def test_web_reader_can_read_data_tables(db):
+    db.execute("set local role web_reader")
+    for t in ("institution", "program", "admission_stat", "admission_requirement", "cost",
+              "strength", "field", "institution_stat", "source"):
+        db.execute(f"select count(*) from {t}")
+
+@pytest.mark.parametrize("table", ["fetch_log", "cac_fetch"])
+def test_web_reader_cannot_read_private_tables(db, table):
+    db.execute("set local role web_reader")
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        db.execute(f"select count(*) from {table}")
+
+def test_web_reader_cannot_write(db):
+    db.execute("set local role web_reader")
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        db.execute("insert into field(code,name_zh,name_en,sort) values ('x','x','x',99)")
+
+def test_web_reader_is_not_privileged(db):
+    row = db.execute("select rolsuper, rolbypassrls from pg_roles where rolname='web_reader'").fetchone()
+    assert row == (False, False)
