@@ -19,11 +19,11 @@ export default function RegionSelect({
   }
   return (
     <label className="flex items-center gap-1 text-sm">
-      <span className="text-[var(--color-muted)]">{labels.label}</span>
+      <span className="text-subtle">{labels.label}</span>
       <select
         defaultValue="all"
         onChange={(e) => onChange(e.target.value as Region)}
-        className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1"
+        className="rounded border border-line bg-page px-2 py-1"
       >
         <option value="all">{labels.all}</option>
         <option value="tw">{labels.tw}</option>

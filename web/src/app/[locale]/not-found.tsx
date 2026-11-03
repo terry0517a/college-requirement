@@ -8,7 +8,7 @@ export default async function NotFound() {
     <div className="space-y-2">
       <h1 className="text-2xl font-bold">{zh.notFound.title} / {en.notFound.title}</h1>
       <p>
-        <Link href="/" className="text-[var(--color-accent)] hover:underline">
+        <Link href="/" className="text-brand hover:underline">
           {zh.notFound.back} / {en.notFound.back}
         </Link>
       </p>

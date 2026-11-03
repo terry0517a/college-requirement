@@ -14,7 +14,7 @@ function Inner({ locale, label }: { locale: Locale; label: string }) {
   else segments.splice(1, 0, other)
   const href = segments.join('/') + (search ? `?${search}` : '')
   return (
-    <Link href={href} prefetch={false} hrefLang={other} className="text-sm text-[var(--color-accent)] hover:underline">
+    <Link href={href} prefetch={false} hrefLang={other} className="text-sm text-brand hover:underline">
       {label}
     </Link>
   )
@@ -22,7 +22,7 @@ function Inner({ locale, label }: { locale: Locale; label: string }) {
 
 export default function LanguageSwitch(props: { locale: Locale; label: string }) {
   return (
-    <Suspense fallback={<span className="text-sm text-[var(--color-muted)]">{props.label}</span>}>
+    <Suspense fallback={<span className="text-sm text-subtle">{props.label}</span>}>
       <Inner {...props} />
     </Suspense>
   )

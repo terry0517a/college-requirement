@@ -16,16 +16,16 @@ export default async function HomePage({ params }: PageProps<'/[locale]'>) {
     <div className="space-y-8">
       <section className="space-y-3">
         <h1 className="text-3xl font-bold">{dict.site.name}</h1>
-        <p className="text-[var(--color-muted)]">{dict.site.tagline}</p>
+        <p className="text-subtle">{dict.site.tagline}</p>
         <form action={`/${locale}/explore`} method="get" className="flex gap-2">
           <input
             type="search"
             name="q"
             placeholder={dict.home.searchPlaceholder}
             aria-label={dict.home.searchPlaceholder}
-            className="flex-1 rounded border border-[var(--color-border)] px-3 py-2"
+            className="flex-1 rounded border border-line px-3 py-2"
           />
-          <button type="submit" className="rounded bg-[var(--color-accent)] px-4 py-2 text-white">
+          <button type="submit" className="rounded bg-brand px-4 py-2 text-white">
             {dict.home.searchButton}
           </button>
         </form>
@@ -38,7 +38,7 @@ export default async function HomePage({ params }: PageProps<'/[locale]'>) {
               key={r.key}
               href={`/${locale}/explore?region=${r.key}`}
               prefetch={false}
-              className="rounded border border-[var(--color-border)] px-4 py-2 hover:border-[var(--color-accent)]"
+              className="rounded border border-line px-4 py-2 hover:border-brand"
             >
               {r.label}
             </Link>

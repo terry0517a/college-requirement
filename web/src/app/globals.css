@@ -18,7 +18,6 @@
 }
 
 body {
-  background: #ffffff;
   background-color: var(--color-bg);
   color: var(--color-fg);
   font-family: var(--font-sans);

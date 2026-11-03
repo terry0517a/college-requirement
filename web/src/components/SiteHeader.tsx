@@ -6,7 +6,7 @@ import RegionSelect from './RegionSelect'
 
 export default function SiteHeader({ locale, dict }: { locale: Locale; dict: Dictionary }) {
   return (
-    <header className="border-b border-[var(--color-border)]">
+    <header className="border-b border-line">
       <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3">
         <Link href={`/${locale}`} className="font-semibold">
           {dict.site.name}
