@@ -4,12 +4,13 @@ import { notFound } from 'next/navigation'
 import { hasLocale, locales, type Locale } from '@/i18n/config'
 import { getDictionary, type Dictionary } from '@/i18n/dictionaries'
 import { getSchoolCached, listSchoolIdsForPrerender } from '@/lib/data'
-import { formatMoney, formatPercent, formatRange } from '@/lib/format'
+import { formatMoney, formatPercent } from '@/lib/format'
 import { displayName } from '@/lib/names'
 import { parseId, type SchoolDetail } from '@/lib/queries/school'
 import FavoriteButton from '@/components/FavoriteButton'
 import NoData from '@/components/NoData'
 import SchoolToc from '@/components/SchoolToc'
+import UsAdmissionTable from '@/components/UsAdmissionTable'
 import SourceNote from '@/components/SourceNote'
 import StrengthList from '@/components/StrengthList'
 
@@ -128,47 +129,14 @@ function SchoolView({ school, locale, dict }: { school: SchoolDetail; locale: Lo
               <NoData label={dict.common.noData} />
             ) : (
             <>
-              {school.us.years.length === 0 ||
-              school.us.years.every((y) => y.admissionRate === null && y.sat === null && y.act === null) ? (
-                <NoData label={dict.common.noData} />
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <caption className="pb-1 text-left text-xs text-subtle">{t.percentileNote}</caption>
-                    <thead>
-                      <tr className="border-b border-line">
-                        <th className={th}>{t.year}</th>
-                        <th className={th}>{t.admissionRate}</th>
-                        <th className={th}>{t.satRw}</th>
-                        <th className={th}>{t.satMath}</th>
-                        <th className={th}>{t.satTotal}</th>
-                        <th className={th}>{t.act}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {school.us.years.map((y) => (
-                        <tr key={y.year} className="border-b border-line">
-                          <td className={td}>{y.year}</td>
-                          <td className={td}>{formatPercent(y.admissionRate, locale)}</td>
-                          <td className={td}>{formatRange(y.sat?.rw ?? null)}</td>
-                          <td className={td}>{formatRange(y.sat?.math ?? null)}</td>
-                          <td className={td}>{formatRange(y.sat?.total ?? null)}</td>
-                          <td className={td}>{formatRange(y.act?.composite ?? null)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              {usFields.length > 0 && (
-                <p className="text-sm">
-                  <span className="text-subtle">{t.usFields}{locale === 'zh' ? '：' : ': '}</span>
-                  {usFields.join(locale === 'zh' ? '、' : ', ')}
-                </p>
-              )}
-              {school.us.sources.map((x) => (
-                <SourceNote key={`${x.name}-${x.url}`} name={x.name} url={x.url} fetchedAt={x.fetchedAt} locale={locale} labels={labels} />
-              ))}
+              <UsAdmissionTable us={school.us} locale={locale} dict={dict}>
+                {usFields.length > 0 && (
+                  <p className="text-sm">
+                    <span className="text-subtle">{t.usFields}{locale === 'zh' ? '：' : ': '}</span>
+                    {usFields.join(locale === 'zh' ? '、' : ', ')}
+                  </p>
+                )}
+              </UsAdmissionTable>
             </>
             )
           ) : (

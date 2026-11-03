@@ -3,7 +3,7 @@ import { sql } from '@/db/client'
 import type { UsSatRequirement } from '@/db/types'
 
 type Src = { name: string; url: string }
-type Prov = Src & { fetchedAt: string }
+export type Prov = Src & { fetchedAt: string }
 
 export type SchoolDetail = {
   institution: {
@@ -30,16 +30,7 @@ export type SchoolDetail = {
   }[]
   /** Taiwan only: provenance of the program table (one entry per source). */
   twSources: Prov[]
-  us: {
-    allProgramId: number
-    years: {
-      year: number
-      admissionRate: number | null
-      sat: UsSatRequirement['sat'] | null
-      act: UsSatRequirement['act'] | null
-    }[]
-    sources: Prov[]
-  } | null
+  us: UsAdmission | null
   costs: { year: number; local: number | null; outOfState: number | null; currency: string }[]
   costSources: Prov[]
   stat: {
@@ -103,6 +94,55 @@ type ProgRow = {
 }
 type ProvRow = { name: string; url: string; fetched_at: Date | string }
 
+export type UsAdmission = {
+  allProgramId: number
+  years: {
+    year: number
+    admissionRate: number | null
+    sat: UsSatRequirement['sat'] | null
+    act: UsSatRequirement['act'] | null
+  }[]
+  sources: Prov[]
+}
+
+/** US school-level admission data (latest 3 years) hung off the 'all' program. */
+export async function getUsAdmission(allProgramId: number): Promise<UsAdmission> {
+  const years = await sql<
+    { year: number; rate: number | null; sat: UsSatRequirement['sat'] | null; act: UsSatRequirement['act'] | null }[]
+  >`
+    with ys as (
+      select year from admission_stat where program_id = ${allProgramId} and pathway = 'us_freshman'
+      union
+      select year from admission_requirement where program_id = ${allProgramId} and pathway = 'us_freshman'
+      order by year desc limit 3)
+    select ys.year,
+      (select a.admission_rate::float8 from admission_stat a
+        where a.program_id = ${allProgramId} and a.pathway = 'us_freshman' and a.year = ys.year
+        order by a.fetched_at desc, a.id desc limit 1) as rate,
+      (select r.requirement->'sat' from admission_requirement r
+        where r.program_id = ${allProgramId} and r.pathway = 'us_freshman' and r.year = ys.year
+        order by r.fetched_at desc, r.id desc limit 1) as sat,
+      (select r.requirement->'act' from admission_requirement r
+        where r.program_id = ${allProgramId} and r.pathway = 'us_freshman' and r.year = ys.year
+        order by r.fetched_at desc, r.id desc limit 1) as act
+    from ys order by ys.year desc`
+  const srcs = await sql<{ name: string; url: string; fetched_at: Date | string }[]>`
+    select s.name, x.source_url as url, max(x.fetched_at) as fetched_at from (
+      select source_id, source_url, fetched_at, year from admission_stat
+        where program_id = ${allProgramId} and pathway = 'us_freshman'
+      union all
+      select source_id, source_url, fetched_at, year from admission_requirement
+        where program_id = ${allProgramId} and pathway = 'us_freshman') x
+    join source s on s.id = x.source_id
+    where x.year = any(${years.map((y) => y.year)})
+    group by s.id, s.name, x.source_url order by s.id, x.source_url`
+  return {
+    allProgramId,
+    years: years.map((y) => ({ year: y.year, admissionRate: y.rate, sat: y.sat, act: y.act })),
+    sources: srcs.map((r) => ({ name: r.name, url: r.url, fetchedAt: iso(r.fetched_at) })),
+  }
+}
+
 export async function getSchool(id: number): Promise<SchoolDetail | null> {
   const [inst] = await sql<InstRow[]>`
     select i.id, i.country_code, i.name_zh, i.name_en, i.control, i.city, i.region, i.web_url,
@@ -146,44 +186,8 @@ export async function getSchool(id: number): Promise<SchoolDetail | null> {
       : []
 
   // US: school-level rows hang off the program with code 'all'.
-  let us: SchoolDetail['us'] = null
   const allProgram = country === 'US' ? programs.find((p) => p.code === 'all') : undefined
-  if (country === 'US' && allProgram) {
-    const years = await sql<
-      { year: number; rate: number | null; sat: UsSatRequirement['sat'] | null; act: UsSatRequirement['act'] | null }[]
-    >`
-      with ys as (
-        select year from admission_stat where program_id = ${allProgram.id} and pathway = 'us_freshman'
-        union
-        select year from admission_requirement where program_id = ${allProgram.id} and pathway = 'us_freshman'
-        order by year desc limit 3)
-      select ys.year,
-        (select a.admission_rate::float8 from admission_stat a
-          where a.program_id = ${allProgram.id} and a.pathway = 'us_freshman' and a.year = ys.year
-          order by a.fetched_at desc, a.id desc limit 1) as rate,
-        (select r.requirement->'sat' from admission_requirement r
-          where r.program_id = ${allProgram.id} and r.pathway = 'us_freshman' and r.year = ys.year
-          order by r.fetched_at desc, r.id desc limit 1) as sat,
-        (select r.requirement->'act' from admission_requirement r
-          where r.program_id = ${allProgram.id} and r.pathway = 'us_freshman' and r.year = ys.year
-          order by r.fetched_at desc, r.id desc limit 1) as act
-      from ys order by ys.year desc`
-    const srcs = await sql<{ name: string; url: string; fetched_at: Date | string }[]>`
-      select s.name, x.source_url as url, max(x.fetched_at) as fetched_at from (
-        select source_id, source_url, fetched_at, year from admission_stat
-          where program_id = ${allProgram.id} and pathway = 'us_freshman'
-        union all
-        select source_id, source_url, fetched_at, year from admission_requirement
-          where program_id = ${allProgram.id} and pathway = 'us_freshman') x
-      join source s on s.id = x.source_id
-      where x.year = any(${years.map((y) => y.year)})
-      group by s.id, s.name, x.source_url order by s.id, x.source_url`
-    us = {
-      allProgramId: allProgram.id,
-      years: years.map((y) => ({ year: y.year, admissionRate: y.rate, sat: y.sat, act: y.act })),
-      sources: srcs.map((r) => ({ name: r.name, url: r.url, fetchedAt: iso(r.fetched_at) })),
-    }
-  }
+  const us: SchoolDetail['us'] = allProgram ? await getUsAdmission(allProgram.id) : null
 
   const costRows = await sql<
     { year: number; local: number | null; oos: number | null; currency: string }[]

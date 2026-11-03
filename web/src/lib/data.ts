@@ -4,6 +4,7 @@ import type { Locale } from '@/i18n/config'
 import type { ExploreParams } from './explore-params'
 import { searchInstitutions } from './queries/explore'
 import { listFields, listSources } from './queries/meta'
+import { getProgram, listProgramIdsForPrerender as listProgramIds } from './queries/program'
 import { getSchool, listSchoolIdsForPrerender as listIds } from './queries/school'
 
 // Every export: async, 'use cache', cacheLife + cacheTag, delegates to queries/*.
@@ -53,4 +54,18 @@ export async function listSchoolIdsForPrerender(limit: number) {
   cacheLife('days')
   cacheTag('institutions')
   return listIds(limit)
+}
+
+export async function getProgramCached(id: number) {
+  'use cache'
+  cacheLife('hours')
+  cacheTag('institutions', `program-${id}`)
+  return getProgram(id)
+}
+
+export async function listProgramIdsForPrerender(limit: number) {
+  'use cache'
+  cacheLife('days')
+  cacheTag('institutions')
+  return listProgramIds(limit)
 }
