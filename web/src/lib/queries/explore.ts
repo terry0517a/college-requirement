@@ -26,6 +26,7 @@ export type ExploreItem = {
   fetchedAt: string
 }
 
+// 台 and 臺 are the same character to users: q is normalized to 台 and so are the zh columns.
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, '\\$&')
 
 type Row = {
@@ -55,9 +56,9 @@ export async function searchInstitutions(
   p: ExploreParams,
   locale: Locale,
 ): Promise<{ total: number; items: ExploreItem[] }> {
-  const like = p.q ? `%${escapeLike(p.q)}%` : null
+  const like = p.q ? `%${escapeLike(p.q.replaceAll('臺', '台'))}%` : null
   const progQ = like
-    ? sql`and (pr.name_zh ilike ${like} escape '\\' or pr.name_en ilike ${like} escape '\\')`
+    ? sql`and (translate(pr.name_zh, '臺', '台') ilike ${like} escape '\\' or pr.name_en ilike ${like} escape '\\')`
     : sql``
   const progField = p.field ? sql`and pr.field_code = ${p.field}` : sql``
   const showMatches = like !== null || p.field !== null
@@ -68,9 +69,9 @@ export async function searchInstitutions(
     ${p.control ? sql`and i.control = ${p.control}` : sql``}
     ${
       like
-        ? sql`and (i.name_zh ilike ${like} escape '\\' or i.name_en ilike ${like} escape '\\'
+        ? sql`and (translate(i.name_zh, '臺', '台') ilike ${like} escape '\\' or i.name_en ilike ${like} escape '\\'
             or exists (select 1 from program pr where pr.institution_id = i.id
-              and (pr.name_zh ilike ${like} escape '\\' or pr.name_en ilike ${like} escape '\\')))`
+              and (translate(pr.name_zh, '臺', '台') ilike ${like} escape '\\' or pr.name_en ilike ${like} escape '\\')))`
         : sql``
     }
     ${

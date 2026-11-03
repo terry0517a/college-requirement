@@ -25,6 +25,7 @@ test('region, field, control filters', async () => {
 test('keyword matches program names and treats % and _ literally', async () => {
   expect((await searchInstitutions({ ...base, q: '資訊工程' }, 'zh')).items.map((i) => i.id)).toEqual([1])
   expect((await searchInstitutions({ ...base, q: 'stanford' }, 'en')).items.map((i) => i.id)).toEqual([10])
+  expect((await searchInstitutions({ ...base, q: '台灣大學' }, 'zh')).items.map((i) => i.id)).toEqual([1])
   expect((await searchInstitutions({ ...base, q: '%' }, 'zh')).total).toBe(0)
   expect((await searchInstitutions({ ...base, q: '_' }, 'zh')).total).toBe(0)
 })
