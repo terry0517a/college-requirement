@@ -1,7 +1,7 @@
 import 'server-only'
 import { sql } from '@/db/client'
 import type { SieveStep } from '@/db/types'
-import { getProgram } from './program'
+import { getProgram, toNum } from './program'
 
 type Range = { p25: number; p75: number } | null
 type Prov = { name: string; url: string; fetchedAt: string }
@@ -89,7 +89,7 @@ async function getCompareItem(id: number): Promise<CompareItem | null> {
   } else {
     const s = d.twSieve[0]
     if (s) {
-      requirementSummary = { kind: 'tw_apply', year: s.year, sieve: s.steps }
+      requirementSummary = { kind: 'tw_apply', year: s.year, sieve: s.steps.map((x) => ({ ...x, min_score: toNum(x.min_score) })) }
       provs.push({ ...s.source, fetchedAt: s.fetchedAt })
     }
     if (d.twDistribution.length) {

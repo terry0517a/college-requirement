@@ -35,7 +35,8 @@ export type SieveStep = {
   order: number
   label: string
   subjects: string[]
-  min_score: number
+  /** Production stores a string ("12"); queries coerce to number | null before components see it. */
+  min_score: number | string | null
 }
 
 export type UacSubject = { subject: string; weight: number }

@@ -40,7 +40,7 @@ export type ProgramDetail = {
 const iso = (d: Date | string) => new Date(d).toISOString()
 
 /** Taiwan programs with CAC application data: first `limit` ids, or [1] when none. */
-export async function listProgramIdsForPrerender(limit: number): Promise<number[]> {
+export async function listProgramIdsForPrerender(limit: number, fallback = true): Promise<number[]> {
   const rows = await sql<{ id: number }[]>`
     select p.id from program p
     join institution i on i.id = p.institution_id
@@ -48,7 +48,14 @@ export async function listProgramIdsForPrerender(limit: number): Promise<number[
       and (exists (select 1 from admission_requirement r where r.program_id = p.id and r.pathway = 'tw_apply')
         or exists (select 1 from admission_stat a where a.program_id = p.id and a.pathway = 'tw_apply'))
     order by p.id limit ${limit}`
-  return rows.length ? rows.map((r) => r.id) : [1]
+  return rows.length || !fallback ? rows.map((r) => r.id) : [1] // [1]: generateStaticParams must not be empty
+}
+
+/** Sieve scores are stored as strings ("12") by the pipeline: always hand numbers (or null) to components. */
+export function toNum(v: number | string | null | undefined): number | null {
+  if (v === null || v === undefined || v === '') return null
+  const n = Number(v)
+  return Number.isNaN(n) ? null : n
 }
 
 type Row = { fetched_at: Date | string; source_name: string; source_url: string }
@@ -134,7 +141,7 @@ export async function getProgram(id: number): Promise<ProgramDetail | null> {
     twApply: applyRows.map((r) => ({ year: r.year, requirement: r.requirement, source: src(r), fetchedAt: iso(r.fetched_at) })),
     twSieve: sieveRows.map((r) => ({
       year: r.year,
-      steps: r.sieve,
+      steps: r.sieve.map((s) => ({ ...s, min_score: toNum(s.min_score) })),
       tiebreak: r.tiebreak,
       source: src(r),
       fetchedAt: iso(r.fetched_at),

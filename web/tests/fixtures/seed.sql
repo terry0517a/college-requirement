@@ -58,13 +58,13 @@ insert into admission_stat (program_id, year, pathway, min_score, admitted_count
 -- TW admission_stat: CAC sieve (min_score/admitted_count are NULL for tw_apply)
 insert into admission_stat (program_id, year, pathway, min_score, admitted_count, subjects, tiebreak, sieve, source_id, source_url, fetched_at) values
   (101, 2024, 'tw_apply', null, null, '[]', null,
-    '[{"order":1,"label":"(英文+自然)24","subjects":["英文","自然"],"min_score":24},{"order":2,"label":"數學A14","subjects":["數學A"],"min_score":14}]',
+    '[{"order":1,"label":"(英文+自然)24","subjects":["英文","自然"],"min_score":"24"},{"order":2,"label":"數學A14","subjects":["數學A"],"min_score":"14"}]',
     3, 'https://www.cac.edu.tw/apply113/pict/001.png', '2026-10-30 03:00:00+00'),
   (101, 2025, 'tw_apply', null, null, '[]', null,
-    '[{"order":1,"label":"(英文+自然)25","subjects":["英文","自然"],"min_score":25},{"order":2,"label":"數學A15","subjects":["數學A"],"min_score":15}]',
+    '[{"order":1,"label":"(英文+自然)25","subjects":["英文","自然"],"min_score":"25"},{"order":2,"label":"數學A15","subjects":["數學A"],"min_score":"15"}]',
     3, 'https://www.cac.edu.tw/apply114/pict/001.png', '2026-10-30 03:00:00+00'),
   (101, 2026, 'tw_apply', null, null, '[]', '同級分超額篩選',
-    '[{"order":1,"label":"(英文+自然)26","subjects":["英文","自然"],"min_score":26},{"order":2,"label":"數學A15","subjects":["數學A"],"min_score":15}]',
+    '[{"order":1,"label":"(英文+自然)26","subjects":["英文","自然"],"min_score":"26"},{"order":2,"label":"數學A15","subjects":["數學A"],"min_score":"15"}]',
     3, 'https://www.cac.edu.tw/apply115/pict/001.png', '2026-10-30 03:00:00+00');
 
 -- TW admission_requirement (CAC individual application)
