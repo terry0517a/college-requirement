@@ -104,3 +104,13 @@ def test_web_reader_cannot_write(db):
 def test_web_reader_is_not_privileged(db):
     row = db.execute("select rolsuper, rolbypassrls from pg_roles where rolname='web_reader'").fetchone()
     assert row == (False, False)
+
+
+def test_every_public_table_has_rls(db):
+    # On Supabase, web_reader inherits anon's default table privileges, so RLS
+    # is what keeps private tables private and all tables read-only.
+    rows = db.execute(
+        "select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace"
+        " where n.nspname = 'public' and c.relkind = 'r' and not c.relrowsecurity"
+    ).fetchall()
+    assert rows == []
