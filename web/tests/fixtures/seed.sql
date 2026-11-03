@@ -6,7 +6,7 @@
 insert into source (id, code, name, url, license) values
   (1, 'hipo', 'Hipo university-domains-list', 'https://github.com/Hipo/university-domains-list', 'MIT'),
   (2, 'uac', '大學考試入學分發委員會', 'https://www.uac.edu.tw/', '公開資料（政府資訊）'),
-  (3, 'cac', '大學甄選入學委員會', 'https://www.cac.edu.tw/', '公開資料（政府資訊）；網站 robots.txt 全站 Disallow，經使用者決定以節制方式抓取'),
+  (3, 'cac', '大學甄選入學委員會', 'https://www.cac.edu.tw/', '公開資料（政府資訊）'),
   (4, 'scorecard', 'College Scorecard (U.S. Department of Education)', 'https://collegescorecard.ed.gov/', 'Public domain (U.S. Government work)'),
   (5, 'openalex', 'OpenAlex', 'https://openalex.org/', 'CC0');
 

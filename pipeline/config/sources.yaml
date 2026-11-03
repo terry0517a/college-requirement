@@ -15,6 +15,9 @@ scorecard:
   url: https://collegescorecard.ed.gov/
   license: Public domain (U.S. Government work)
 cac:
+  # The site's robots.txt disallows everything; the owner decided to fetch it
+  # anyway at a restrained rate (spec section 4). `license` is shown publicly
+  # on the website's about page, so keep this note out of it.
   name: 大學甄選入學委員會
   url: https://www.cac.edu.tw/
-  license: 公開資料（政府資訊）；網站 robots.txt 全站 Disallow，經使用者決定以節制方式抓取
+  license: 公開資料（政府資訊）
