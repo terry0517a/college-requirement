@@ -10,12 +10,16 @@ import { formatMoney, formatPercent, formatRange, listSep } from '@/lib/format'
 import { displayName } from '@/lib/names'
 import type { CompareItem } from '@/lib/queries/compare'
 import NoData from '@/components/NoData'
+import CompareRedirect from '@/components/CompareRedirect'
 import SourceNote from '@/components/SourceNote'
 
 export async function generateMetadata({ params }: PageProps<'/[locale]/compare'>): Promise<Metadata> {
   const { locale } = await params
   if (!hasLocale(locale)) notFound()
-  return { title: (await getDictionary(locale)).compare.title }
+  return {
+    title: (await getDictionary(locale)).compare.title,
+    alternates: { languages: { 'zh-Hant-TW': '/zh/compare', en: '/en/compare' } },
+  }
 }
 
 export default async function ComparePage({ params, searchParams }: PageProps<'/[locale]/compare'>) {
@@ -46,6 +50,7 @@ async function Results({
   if (items.length < 2) {
     return (
       <div className="space-y-3">
+        {ids.length === 0 && <CompareRedirect locale={locale} />}
         <p>{dict.compare.needTwo}</p>
         <Link href={`/${locale}/explore`} prefetch={false} className="text-brand underline">
           {dict.compare.backToExplore}
