@@ -24,7 +24,7 @@ def test_rls_enabled_on_every_table(db):
 def test_anon_read_policies(db):
     pol = {r[0]: r[1:] for r in db.execute("select tablename, policyname, cmd, roles from pg_policies where schemaname='public'")}
     assert "fetch_log" not in pol
-    for t in _public_tables(db) - {"fetch_log"}:
+    for t in _public_tables(db) - {"fetch_log", "cac_fetch"}:
         assert pol.get(t) == (f"{t}_anon_read", "SELECT", ["anon"]), t
 
 def test_openalex_id_unique(db):
@@ -61,3 +61,24 @@ def test_program_field_code_must_exist(db):
                      "values ('US','X','x.edu',%s,'u',now()) returning id", (sid,)).fetchone()[0]
     with pytest.raises(psycopg.errors.ForeignKeyViolation):
         db.execute("insert into program(institution_id,code,field_code,source_id,source_url,fetched_at) values (%s,'99','nope',%s,'u',now())", (iid, sid))
+
+
+def test_admission_stat_has_sieve_column(db):
+    cols = {r[0] for r in db.execute("select column_name from information_schema.columns where table_name='admission_stat'")}
+    assert "sieve" in cols
+
+
+def test_cac_fetch_table_and_unique(db):
+    db.execute("insert into cac_fetch (job, roc_year, school_code, url, status, fetched_at) values ('cac_sieve', 115, '001', 'u', 'done', now())")
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        with db.transaction():
+            db.execute("insert into cac_fetch (job, roc_year, school_code, url, status, fetched_at) values ('cac_sieve', 115, '001', 'u2', 'failed', now())")
+
+
+def test_cac_fetch_has_no_anon_policy(db):
+    n = db.execute("select count(*) from pg_policies where tablename = 'cac_fetch'").fetchone()[0]
+    assert n == 0
+
+
+def test_cac_source_entry_loads(db):
+    assert ensure_source(db, "cac") > 0

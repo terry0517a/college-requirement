@@ -14,3 +14,7 @@ scorecard:
   name: College Scorecard (U.S. Department of Education)
   url: https://collegescorecard.ed.gov/
   license: Public domain (U.S. Government work)
+cac:
+  name: 大學甄選入學委員會
+  url: https://www.cac.edu.tw/
+  license: 公開資料（政府資訊）；網站 robots.txt 全站 Disallow，經使用者決定以節制方式抓取
