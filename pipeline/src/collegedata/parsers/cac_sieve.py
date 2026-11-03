@@ -1,11 +1,13 @@
 """Geometry, per-cell OCR and row parsing for the CAC 篩選標準一覽表 PNG."""
 from __future__ import annotations
 
+import hashlib
 import io
 import logging
 import re
 import unicodedata
 from dataclasses import dataclass
+from pathlib import Path
 from decimal import Decimal, InvalidOperation
 from typing import Protocol
 
@@ -136,21 +138,38 @@ def parse_level(s: str) -> str | None:
     return first + "標" if first else None
 
 
+def _glyph_sub(table: str, text: str, column: str) -> str:
+    """Apply a single-glyph OCR substitution, logging every time one fires."""
+    fixed = OCR_CONFUSIONS[table].get(text)
+    if fixed is None:
+        return text
+    log.warning("ocr glyph substitution in %s: %r -> %r", column, text, fixed)
+    return fixed
+
+
 def parse_listening(s: str) -> str | None:
-    t = normalize_text(s).upper()
+    t = _glyph_sub("listening", normalize_text(s), "英聽").upper()
     return t if t in ("A", "B", "C") else None
+
+
+def collapse_dots(s: str) -> str:
+    """The v5 model doubles the decimal point (2..5); see OCR_CONFUSIONS["number_dots"]."""
+    return re.sub(r"\.{2,}", ".", s)
 
 
 def parse_multiplier(s: str) -> Decimal | None:
     try:
-        d = Decimal(normalize_text(s).rstrip("."))  # a trailing "." is border noise
+        t = collapse_dots(normalize_text(s))
+        t = _glyph_sub("multiplier_glyphs", t, "multiplier")
+        d = Decimal(t.rstrip("."))  # a trailing "." is border noise
     except InvalidOperation:
         return None
     return d if d.is_finite() else None
 
 
 def parse_quota(s: str) -> int:
-    return int(normalize_text(s).rstrip("."))
+    # a quota is an integer: any dot is noise (115 台大 001052 quota 11 read as 1.1 by the v5 model)
+    return int(normalize_text(s).replace(".", ""))
 
 
 @dataclass
@@ -194,7 +213,9 @@ _CELL = re.compile(r"^\(?(.+?)\)?\s*(\d+(?:\.\d+)?)$")
 
 
 def parse_sieve_cell(s: str) -> SieveLevel | None:
-    t = normalize_text(s)
+    t = collapse_dots(normalize_text(s))
+    for wrong, right in OCR_CONFUSIONS["sieve_text"].items():
+        t = t.replace(wrong, right)
     if t in _MISSING:
         return None
     m = _CELL.match(t)
@@ -219,16 +240,31 @@ class OcrEngine(Protocol):
     def recognize(self, line: np.ndarray) -> str: ...
 
 
-class RapidOcrEngine:
-    """Per-line recognition only (use_det=False); whole-image detection misreads this table."""
+MODEL_DIR = Path(__file__).resolve().parents[3] / "models" / "ocr"  # pipeline/models/ocr
 
-    TARGET_HEIGHT = 40
+
+class RapidOcrEngine:
+    """Per-line recognition only (use_det=False); whole-image detection misreads this table.
+
+    Uses the PP-OCRv5 mobile recognition model shipped in pipeline/models/ocr (see its README):
+    rapidocr's default model is simplified-Chinese only and misreads the traditional text.
+    """
+
+    TARGET_HEIGHT = 48
     MAX_WIDTH = 1600  # rapidocr raises ResizeImgError on very wide inputs
+    MODEL_PATH = MODEL_DIR / "ch_PP-OCRv5_rec_mobile.onnx"
+    KEYS_PATH = MODEL_DIR / "ppocrv5_dict.txt"
+    MODEL_SHA256 = "5825fc7ebf84ae7a412be049820b4d86d77620f204a041697b0494669b1742c5"
+    KEYS_SHA256 = "d1979e9f794c464c0d2e0b70a7fe14dd978e9dc644c0e71f14158cdf8342af1b"
 
     def __init__(self) -> None:
+        for path, expected in ((self.MODEL_PATH, self.MODEL_SHA256), (self.KEYS_PATH, self.KEYS_SHA256)):
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            if digest != expected:
+                raise RuntimeError(f"OCR model checksum mismatch for {path}: {digest}")
         from rapidocr_onnxruntime import RapidOCR  # lazy: model load is slow
 
-        self._engine = RapidOCR()
+        self._engine = RapidOCR(rec_model_path=str(self.MODEL_PATH), rec_keys_path=str(self.KEYS_PATH))
 
     def recognize(self, line: np.ndarray) -> str:
         h = line.shape[0]
@@ -266,11 +302,31 @@ OCR_CONFUSIONS = {
         **{f"順序{n}": f"sieve{i}" for i, n in enumerate("一二三四五六", 1)},
     },
     # the stylised 無 in the gender column is consistently read as 浦
-    "no_gender": {"無", "浦"},
+    "no_gender": {"無", "浦", "海"},  # 海: v5 model, 113 台大
     # the small asterisk in the overflow column is consistently read as 水 (米/×/x are look-alikes)
-    "star": {"*", "＊", "水", "米", "×", "x"},
+    # v5 model: ÷ (113/114 台大) and r (113 台大)
+    "star": {"*", "＊", "水", "米", "×", "x", "÷", "r"},
     # the OCR model cannot read 戲 and drops it (prefix match)
     "name_repairs": {"劇學系": "戲劇學系"},
+    # --- observed with the PP-OCRv5 model on the full 113 and 114 台大 (001) images ---
+    # header text only (never data cells): 會 read as 曾
+    "header_text": {"社曾": "社會"},
+    # the 【】 of the group marker above a table are read as ( ) or [ ]
+    "marker_open": "【([（",
+    "marker_close": "】)]）",
+    # quota_dots: an integer quota read with a dot (11 -> 1.1) -> dots dropped (parse_quota)
+    # --- observed with the PP-OCRv5 model on the 113 台大 image only (single glyphs, own column only) ---
+    # sieve cells: the 會 of 社會 read as 曾 (applied to sieve-cell labels, not other data cells)
+    "sieve_text": {"社曾": "社會"},
+    # 英聽 A read as 合
+    "listening": {"合": "A"},
+    # a lone multiplier 5 read as u
+    "multiplier_glyphs": {"u": "5"},
+    # 歷 (歷史學系) read as the Japanese form 歴
+    "name_chars": {"歴": "歷"},
+    # 114 台大: the overflow star read as "-"; a lone ink blob no wider than this x its height is a star
+    "star_max_aspect": 1.3,
+    # number_dots: a multiplier / min score 2.5 read as 2..5 -> repeated dots collapse (collapse_dots)
 }
 _HEADER_ALIASES = OCR_CONFUSIONS["header_aliases"]
 _HEADER_KEYS = sorted(KNOWN_HEADERS, key=len, reverse=True)
@@ -285,6 +341,8 @@ def map_headers(header_texts: list[str]) -> dict[int, tuple[str, str]] | None:
     mapping: dict[int, tuple[str, str]] = {}
     for i, raw in enumerate(header_texts):
         text = normalize_text(raw)
+        for wrong, right in OCR_CONFUSIONS["header_text"].items():
+            text = text.replace(wrong, right)
         key = next((KNOWN_HEADERS[k] for k in _HEADER_KEYS if k in text), None)
         if key is None:
             key = next((_HEADER_ALIASES[k] for k in _ALIAS_KEYS if k in text), None)
@@ -364,7 +422,9 @@ def _group_name(gray: np.ndarray, above: tuple[int, int] | None, ocr: OcrEngine,
     lines = cell_lines(gray, above[0], above[1], 0, gray.shape[1]) if above else []
     # the marker is the line right above the table
     text = normalize_text(_recognize(ocr, lines[-1], warnings)) if lines else ""
-    m = re.search(r"[【\[]([^】\]]+)", text)
+    opens = re.escape(OCR_CONFUSIONS["marker_open"])
+    closes = re.escape(OCR_CONFUSIONS["marker_close"])
+    m = re.search(f"[{opens}]([^{closes}]+)", text)
     if m:
         return m.group(1)
     if previous is not None:
@@ -376,6 +436,7 @@ def _group_name(gray: np.ndarray, above: tuple[int, int] | None, ocr: OcrEngine,
 
 
 def _repair_name(name: str) -> str:
+    name = name.translate(str.maketrans(OCR_CONFUSIONS["name_chars"]))
     for prefix, fixed in OCR_CONFUSIONS["name_repairs"].items():
         if name.startswith(prefix):
             repaired = fixed + name[len(prefix):]
@@ -384,10 +445,27 @@ def _repair_name(name: str) -> str:
     return name
 
 
+def _is_star_blob(gray: np.ndarray, y0: int, y1: int, x0: int, x1: int) -> bool:
+    """The overflow star is one small, roughly square blob of ink (the "--" is too light to count as ink).
+
+    The v5 model reads it as -, which would otherwise pass as "no tie-break" (114 台大 001012).
+    """
+    lines = cell_lines(gray, y0, y1, x0, x1)
+    if len(lines) != 1:
+        return False
+    ink = lines[0] < INK_DARK
+    h = int(ink.any(axis=1).sum())
+    xs = np.flatnonzero(ink.any(axis=0))
+    w = int(xs[-1] - xs[0] + 1)
+    return w <= OCR_CONFUSIONS["star_max_aspect"] * h
+
+
 def _parse_overflow(text: str) -> bool:
     if not text or _is_missing(text):
         return False
     if text in OCR_CONFUSIONS["star"]:
+        if text not in ("*", "＊"):
+            log.warning("ocr glyph substitution in overflow: %r -> '*'", text)
         return True
     raise ValueError(f"bad overflow {text!r}")
 
@@ -428,6 +506,8 @@ def _build_row(cells: list[str], mapping: dict[int, tuple[str, str]], school_cod
     if not re.fullmatch(r"\d{6}", code) or code[:3] != school_code:
         raise ValueError(f"bad code {code!r}")
     gender = base.get("gender", "")
+    if gender in OCR_CONFUSIONS["no_gender"] and gender != "無":
+        log.warning("ocr glyph substitution in gender: %r -> '無'", gender)
     if gender and gender not in OCR_CONFUSIONS["no_gender"] and gender not in ("男", "女"):
         raise ValueError(f"bad gender {gender!r}")
     gender = gender if gender in ("男", "女") else None
@@ -489,6 +569,9 @@ def _parse_table(gray: np.ndarray, table: Table, rows: list[tuple[int, int, bool
     result.groups.append(group)
     for y0, y1 in trows[n_header:]:
         cells = [_ocr_cell(gray, y0, y1, x0, x1, ocr, result.warnings) for x0, x1 in cols]
+        for i, (x0, x1) in enumerate(cols):
+            if mapping.get(i) == ("base", "overflow") and _is_star_blob(gray, y0, y1, x0, x1):
+                cells[i] = "*"
         log.debug("%s raw cells: %s", school_code, cells)
         try:
             result.rows.append(_build_row(cells, mapping, school_code, group))

@@ -245,3 +245,140 @@ def test_raw_cells_logged_at_debug(caplog):
     with caplog.at_level(logging.DEBUG, logger=cac_sieve.__name__):
         parse_rows(GOOD)
     assert "001012" in caplog.text and "中國文學系" in caplog.text
+
+
+# ---------------------------------------------------------------- v5-model confusions (113/114 台大)
+
+def test_header_she_zeng_maps_to_social():
+    m = map_headers(["校系代碼", "校系名稱", "招生名額", "社曾", "社曾"])
+    assert m[3] == ("thresholds", "社會") and m[4] == ("multipliers", "社會")
+
+
+def test_she_zeng_not_rewritten_in_data_cells():
+    assert cac_sieve.expand_subjects("社曾") == []
+
+
+@pytest.mark.parametrize("marker,group", [
+    ("(一般校系】", "一般校系"), ("(檢定、倍率篩選APCS校系)", "檢定、倍率篩選APCS校系"),
+    ("（一般校系）", "一般校系"), ("[一般校系]", "一般校系"), ("【一般校系】", "一般校系"),
+])
+def test_bracket_lookalikes_recognised_as_group_marker(marker, group):
+    ocr = FakeOcr()
+    png = make_tables(ocr, [(marker, [HEADER, _pad(GOOD, len(HEADER))])])
+    res = parse_sieve_image(png, "001", ocr=ocr)
+    assert res.groups == [group] and res.rows_skipped == 0
+
+
+def test_division_sign_is_overflow_star():
+    res = parse_rows(GOOD[:5] + ["÷"])
+    assert res.rows_skipped == 0 and res.rows[0].overflow_tiebreak is True
+
+
+def test_repeated_dots_collapse_in_numbers():
+    assert cac_sieve.parse_multiplier("2..5") == Decimal("2.5")
+    lv = cac_sieve.parse_sieve_cell("英文12..5")
+    assert lv.min_score == Decimal("12.5")
+
+
+def test_real_engine_rejects_wrong_model_checksum(monkeypatch):
+    monkeypatch.setattr(RapidOcrEngine, "MODEL_SHA256", "0" * 64)
+    with pytest.raises(RuntimeError):
+        RapidOcrEngine()
+
+
+# ---------------------------------------------------------------- 113 / 114 golden crops (values read from the images)
+
+def _th(chi, eng, ma, mb, soc, nat=None, lis=None):
+    return {"國文": chi, "英文": eng, "數學A": ma, "數學B": mb, "社會": soc, "自然": nat, "英聽": lis}
+
+
+def _mu(chi=None, eng=None, ma=None, mb=None, soc=None, nat=None, combo=None):
+    vals = (chi, eng, ma, mb, soc, nat, combo)
+    return {k: None if v is None else Decimal(v) for k, v in zip(cac_sieve.MULTIPLIER_KEYS, vals)}
+
+
+GOLDEN = {
+    "114": [
+        ("001012", None, "中國文學系", 23, _th("前標", "均標", "均標", "均標", "均標"), _mu(chi="3", eng="6", soc="8"),
+         ["社會13", "英文12", "國文15"], True),
+        ("001022", None, "外國語文學系", 49, _th("前標", "頂標", "均標", "均標", "前標", None, "A"), _mu(eng="2.5"),
+         ["英文15"], True),
+        ("001072", None, "日本語文學系", 25, _th("前標", "前標", "均標", "均標", "前標"),
+         _mu(chi="3", eng="3", soc="4", combo="5"), ["國英社41", "社會14", "(國文+英文)27"], True),
+        ("001082", "男", "戲劇學系", 8, _th("前標", "前標", None, "均標", "均標"),
+         _mu(chi="5", eng="3", mb="10", soc="15", combo="8"),
+         ["社會10", "數學B6", "國英數B社41", "國文12", "英文13"], False),
+    ],
+    "113": [
+        ("001012", None, "中國文學系", 23, _th("前標", "均標", "均標", "均標", "均標"), _mu(chi="3", eng="6", soc="8"),
+         ["社會12", "英文10", "國文15"], True),
+        ("001032", None, "歷史學系", 23, _th("前標", "前標", None, "均標", "前標"), _mu(chi="6", eng="4", soc="3"),
+         ["國文13", "英文13", "社會15"], True),
+        ("001052", None, "人類學系", 13, _th(None, "均標", None, None, "均標"), _mu(eng="5", combo="2.5"),
+         ["英文14", "國英數B社53"], True),
+        ("001082", "女", "戲劇學系", 9, _th("前標", "前標", None, "均標", "均標"),
+         _mu(chi="5", eng="3", mb="10", soc="15", combo="8"),
+         ["社會10", "數學B6", "國英數B社45", "國文13", "英文14"], False),
+    ],
+}
+
+
+@pytest.mark.parametrize("year", ["114", "113"])
+def test_older_year_crop_golden(year):
+    res = parse_sieve_image((FIX / f"{year}_001_crop.png").read_bytes(), "001")
+    assert res.rows_skipped == 0 and res.groups == ["一般校系"], res.warnings
+    for code, gender, name, quota, th, mu, sieve, overflow in GOLDEN[year]:
+        r = next(r for r in res.rows if r.cac_code == code and r.gender == gender)
+        assert (r.name, r.quota, r.group) == (name, quota, "一般校系")
+        assert r.thresholds == th and r.multipliers == mu, r.raw_cells
+        assert [s.label for s in r.sieve] == sieve, r.raw_cells
+        assert [s.order for s in r.sieve] == list(range(1, len(sieve) + 1))
+        assert r.overflow_tiebreak is overflow
+
+
+def test_dot_inside_quota_is_noise():
+    assert cac_sieve.parse_quota("1.1") == 11 and cac_sieve.parse_quota("23.") == 23
+
+
+def test_113_single_glyph_confusions():
+    assert cac_sieve.parse_listening("合") == "A"
+    assert cac_sieve.parse_multiplier("u") == Decimal("5")
+    lv = cac_sieve.parse_sieve_cell("社曾12")
+    assert lv.label == "社會12" and lv.subjects == ["社會"]
+    res = parse_rows(["001032", "海", "歴史學系", "23", "國文13", "r"])
+    assert res.rows_skipped == 0
+    r = res.rows[0]
+    assert (r.gender, r.name, r.overflow_tiebreak) == (None, "歷史學系", True)
+
+
+def test_square_blob_in_overflow_column_is_star_even_if_read_as_dash():
+    class DashOcr(FakeOcr):
+        def recognize(self, line):
+            if (line < 110).any(axis=0).sum() == 14:   # the square blob drawn below
+                return "-"
+            return super().recognize(line)
+    ocr = DashOcr()
+    png = make_table(ocr, [HEADER, _pad(GOOD[:5], len(HEADER))])
+    img = Image.open(io.BytesIO(png)).convert("L")
+    ImageDraw.Draw(img).rectangle([10 + 5 * COL_W + 12, 20 + ROW_H + 12, 10 + 5 * COL_W + 25, 20 + ROW_H + 25], fill=0)
+    buf = io.BytesIO(); img.save(buf, "PNG")
+    res = parse_sieve_image(buf.getvalue(), "001", ocr=ocr)
+    assert res.rows_skipped == 0 and res.rows[0].overflow_tiebreak is True
+
+
+def test_real_engine_rejects_wrong_dict_checksum(monkeypatch):
+    monkeypatch.setattr(RapidOcrEngine, "KEYS_SHA256", "0" * 64)
+    with pytest.raises(RuntimeError, match="ppocrv5_dict"):
+        RapidOcrEngine()
+
+
+def test_single_glyph_substitutions_are_logged(caplog):
+    with caplog.at_level(logging.WARNING, logger=cac_sieve.__name__):
+        cac_sieve.parse_listening("合")
+        cac_sieve.parse_multiplier("u")
+    assert "英聽: '合' -> 'A'" in caplog.text and "multiplier: 'u' -> '5'" in caplog.text
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cac_sieve.__name__):
+        cac_sieve.parse_listening("A")
+        cac_sieve.parse_multiplier("5")
+    assert "substitution" not in caplog.text
