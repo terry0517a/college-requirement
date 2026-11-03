@@ -24,6 +24,8 @@ export default function UsAdmissionTable({
   const t = dict.school
   const labels = { source: dict.common.source, fetched: dict.common.fetchedAt }
   const empty = us.years.length === 0 || us.years.every((y) => y.admissionRate === null && y.sat === null && y.act === null)
+  const noTests = !empty && us.years.every((y) => y.sat === null && y.act === null)
+  const sep = locale === 'zh' ? '：' : ': '
   return (
     <>
       {empty ? (
@@ -56,6 +58,9 @@ export default function UsAdmissionTable({
             </tbody>
           </table>
         </div>
+      )}
+      {noTests && (
+        <NoData label={`${t.satTotal} / ${t.act}${sep}${dict.common.noData}`} />
       )}
       {children}
       {us.sources.map((x) => (
