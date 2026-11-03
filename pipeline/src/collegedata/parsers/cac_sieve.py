@@ -138,9 +138,17 @@ def parse_level(s: str) -> str | None:
     return first + "標" if first else None
 
 
+def _glyph_sub(table: str, text: str, column: str) -> str:
+    """Apply a single-glyph OCR substitution, logging every time one fires."""
+    fixed = OCR_CONFUSIONS[table].get(text)
+    if fixed is None:
+        return text
+    log.warning("ocr glyph substitution in %s: %r -> %r", column, text, fixed)
+    return fixed
+
+
 def parse_listening(s: str) -> str | None:
-    t = normalize_text(s)
-    t = OCR_CONFUSIONS["listening"].get(t, t).upper()
+    t = _glyph_sub("listening", normalize_text(s), "英聽").upper()
     return t if t in ("A", "B", "C") else None
 
 
@@ -152,7 +160,7 @@ def collapse_dots(s: str) -> str:
 def parse_multiplier(s: str) -> Decimal | None:
     try:
         t = collapse_dots(normalize_text(s))
-        t = OCR_CONFUSIONS["multiplier_glyphs"].get(t, t)
+        t = _glyph_sub("multiplier_glyphs", t, "multiplier")
         d = Decimal(t.rstrip("."))  # a trailing "." is border noise
     except InvalidOperation:
         return None
@@ -247,11 +255,13 @@ class RapidOcrEngine:
     MODEL_PATH = MODEL_DIR / "ch_PP-OCRv5_rec_mobile.onnx"
     KEYS_PATH = MODEL_DIR / "ppocrv5_dict.txt"
     MODEL_SHA256 = "5825fc7ebf84ae7a412be049820b4d86d77620f204a041697b0494669b1742c5"
+    KEYS_SHA256 = "d1979e9f794c464c0d2e0b70a7fe14dd978e9dc644c0e71f14158cdf8342af1b"
 
     def __init__(self) -> None:
-        digest = hashlib.sha256(self.MODEL_PATH.read_bytes()).hexdigest()
-        if digest != self.MODEL_SHA256:
-            raise RuntimeError(f"OCR model checksum mismatch for {self.MODEL_PATH}: {digest}")
+        for path, expected in ((self.MODEL_PATH, self.MODEL_SHA256), (self.KEYS_PATH, self.KEYS_SHA256)):
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            if digest != expected:
+                raise RuntimeError(f"OCR model checksum mismatch for {path}: {digest}")
         from rapidocr_onnxruntime import RapidOCR  # lazy: model load is slow
 
         self._engine = RapidOCR(rec_model_path=str(self.MODEL_PATH), rec_keys_path=str(self.KEYS_PATH))
@@ -294,7 +304,8 @@ OCR_CONFUSIONS = {
     # the stylised 無 in the gender column is consistently read as 浦
     "no_gender": {"無", "浦", "海"},  # 海: v5 model, 113 台大
     # the small asterisk in the overflow column is consistently read as 水 (米/×/x are look-alikes)
-    "star": {"*", "＊", "水", "米", "×", "x"},
+    # v5 model: ÷ (113/114 台大) and r (113 台大)
+    "star": {"*", "＊", "水", "米", "×", "x", "÷", "r"},
     # the OCR model cannot read 戲 and drops it (prefix match)
     "name_repairs": {"劇學系": "戲劇學系"},
     # --- observed with the PP-OCRv5 model on the full 113 and 114 台大 (001) images ---
@@ -317,8 +328,6 @@ OCR_CONFUSIONS = {
     "star_max_aspect": 1.3,
     # number_dots: a multiplier / min score 2.5 read as 2..5 -> repeated dots collapse (collapse_dots)
 }
-# the overflow star is also read as ÷ by the v5 model
-OCR_CONFUSIONS["star"].update({"÷", "r"})  # r: 113 台大
 _HEADER_ALIASES = OCR_CONFUSIONS["header_aliases"]
 _HEADER_KEYS = sorted(KNOWN_HEADERS, key=len, reverse=True)
 _ALIAS_KEYS = sorted(_HEADER_ALIASES, key=len, reverse=True)
@@ -455,6 +464,8 @@ def _parse_overflow(text: str) -> bool:
     if not text or _is_missing(text):
         return False
     if text in OCR_CONFUSIONS["star"]:
+        if text not in ("*", "＊"):
+            log.warning("ocr glyph substitution in overflow: %r -> '*'", text)
         return True
     raise ValueError(f"bad overflow {text!r}")
 
@@ -495,6 +506,8 @@ def _build_row(cells: list[str], mapping: dict[int, tuple[str, str]], school_cod
     if not re.fullmatch(r"\d{6}", code) or code[:3] != school_code:
         raise ValueError(f"bad code {code!r}")
     gender = base.get("gender", "")
+    if gender in OCR_CONFUSIONS["no_gender"] and gender != "無":
+        log.warning("ocr glyph substitution in gender: %r -> '無'", gender)
     if gender and gender not in OCR_CONFUSIONS["no_gender"] and gender not in ("男", "女"):
         raise ValueError(f"bad gender {gender!r}")
     gender = gender if gender in ("男", "女") else None

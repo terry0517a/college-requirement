@@ -364,3 +364,21 @@ def test_square_blob_in_overflow_column_is_star_even_if_read_as_dash():
     buf = io.BytesIO(); img.save(buf, "PNG")
     res = parse_sieve_image(buf.getvalue(), "001", ocr=ocr)
     assert res.rows_skipped == 0 and res.rows[0].overflow_tiebreak is True
+
+
+def test_real_engine_rejects_wrong_dict_checksum(monkeypatch):
+    monkeypatch.setattr(RapidOcrEngine, "KEYS_SHA256", "0" * 64)
+    with pytest.raises(RuntimeError, match="ppocrv5_dict"):
+        RapidOcrEngine()
+
+
+def test_single_glyph_substitutions_are_logged(caplog):
+    with caplog.at_level(logging.WARNING, logger=cac_sieve.__name__):
+        cac_sieve.parse_listening("合")
+        cac_sieve.parse_multiplier("u")
+    assert "英聽: '合' -> 'A'" in caplog.text and "multiplier: 'u' -> '5'" in caplog.text
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=cac_sieve.__name__):
+        cac_sieve.parse_listening("A")
+        cac_sieve.parse_multiplier("5")
+    assert "substitution" not in caplog.text
