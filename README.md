@@ -26,9 +26,13 @@ uv run pytest
 ```bash
 cd web
 npm ci
-npm run dev        # http://localhost:3000
-npm run lint && npm run typecheck && npm test
+npm run test:db-setup   # 重建測試資料庫 collegedata_web_test（需要本機 PostgreSQL）
+npm test
+npm run lint && npm run typecheck
+DATABASE_URL=postgresql://localhost/collegedata_dev npm run dev   # http://localhost:3000
 ```
+
+`DATABASE_URL` 只在伺服器端讀取。部署到 Vercel 的設定見[部署說明](docs/deploy.md#網站vercel)。
 
 ## 文件
 
