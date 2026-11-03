@@ -7,7 +7,8 @@ import { getProgramCached, listProgramIdsForPrerender } from '@/lib/data'
 import { displayName } from '@/lib/names'
 import type { ProgramDetail } from '@/lib/queries/program'
 import { safeHttpUrl } from '@/lib/url'
-import { parseId } from '@/lib/queries/school'
+import { parseId } from '@/lib/ids'
+import CompareButton from '@/components/CompareButton'
 import DistributionTable from '@/components/DistributionTable'
 import NoData from '@/components/NoData'
 import SieveTable from '@/components/SieveTable'
@@ -90,6 +91,7 @@ function ProgramView({ detail, locale, dict }: { detail: ProgramDetail; locale: 
             </>
           )}
         </p>
+        <CompareButton programId={p.id} labels={dict.compare} />
         <SourceNote name={p.source.name} url={p.source.url} fetchedAt={p.fetchedAt} locale={locale} labels={labels} />
       </section>
 

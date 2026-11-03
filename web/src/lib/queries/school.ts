@@ -51,11 +51,7 @@ export type SchoolDetail = {
   sources: { block: 'institution' | 'admission' | 'cost' | 'stat' | 'strength'; name: string; url: string; fetchedAt: string }[]
 }
 
-export function parseId(raw: string): number | null {
-  if (!/^[1-9][0-9]{0,9}$/.test(raw)) return null
-  const n = Number(raw)
-  return n <= 2147483647 ? n : null
-}
+export { parseId } from '@/lib/ids'
 
 const iso = (d: Date | string) => new Date(d).toISOString()
 

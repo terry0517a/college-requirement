@@ -7,7 +7,9 @@ import { getSchoolCached, listSchoolIdsForPrerender } from '@/lib/data'
 import { formatMoney, formatPercent, listSep } from '@/lib/format'
 import { safeHttpUrl } from '@/lib/url'
 import { displayName } from '@/lib/names'
-import { parseId, type SchoolDetail } from '@/lib/queries/school'
+import { parseId } from '@/lib/ids'
+import type { SchoolDetail } from '@/lib/queries/school'
+import CompareButton from '@/components/CompareButton'
 import FavoriteButton from '@/components/FavoriteButton'
 import NoData from '@/components/NoData'
 import SchoolToc from '@/components/SchoolToc'
@@ -111,15 +113,7 @@ function SchoolView({ school, locale, dict }: { school: SchoolDetail; locale: Lo
           </dl>
           <div className="flex flex-wrap gap-3">
             <FavoriteButton institutionId={i.id} labels={{ add: t.favorite, remove: t.unfavorite }} />
-            {school.us && (
-              <Link
-                href={`/${locale}/programs/${school.us.allProgramId}`}
-                prefetch={false}
-                className="rounded border border-line px-3 py-1 text-sm hover:border-brand"
-              >
-                {t.addCompare}
-              </Link>
-            )}
+            {school.us && <CompareButton programId={school.us.allProgramId} labels={dict.compare} />}
           </div>
           <SourceNote name={i.source.name} url={i.source.url} fetchedAt={i.fetchedAt} locale={locale} labels={labels} />
         </section>

@@ -4,6 +4,7 @@ import type { Locale } from '@/i18n/config'
 import type { ExploreParams } from './explore-params'
 import { searchInstitutions } from './queries/explore'
 import { listFields, listSources } from './queries/meta'
+import { getCompareItems } from './queries/compare'
 import { getProgram, listProgramIdsForPrerender as listProgramIds } from './queries/program'
 import { getSchool, listSchoolIdsForPrerender as listIds } from './queries/school'
 
@@ -68,4 +69,13 @@ export async function listProgramIdsForPrerender(limit: number) {
   cacheLife('days')
   cacheTag('institutions')
   return listProgramIds(limit)
+}
+
+// ids arrive as a comma-joined string (primitive cache key); rebuilt into numbers inside.
+export async function getCompareItemsCached(idsCsv: string) {
+  'use cache'
+  cacheLife('hours')
+  cacheTag('institutions')
+  const ids = idsCsv ? idsCsv.split(',').map(Number) : []
+  return getCompareItems(ids)
 }

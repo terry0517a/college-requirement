@@ -1,9 +1,11 @@
 import type { Metadata } from 'next'
+import { Suspense } from 'react'
 import { notFound } from 'next/navigation'
 import { hasLocale, htmlLang, locales } from '@/i18n/config'
 import { getDictionary } from '@/i18n/dictionaries'
 import SiteHeader from '@/components/SiteHeader'
 import SiteFooter from '@/components/SiteFooter'
+import CompareTray from '@/components/CompareTray'
 import '../globals.css'
 
 // SITE_URL (e.g. https://example.com) is also read by the sitemap.
@@ -26,6 +28,9 @@ export default async function RootLayout({ children, params }: LayoutProps<'/[lo
         <SiteHeader locale={locale} dict={dict} />
         <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">{children}</main>
         <SiteFooter dict={dict} />
+        <Suspense fallback={null}>
+          <CompareTray locale={locale} labels={dict.compare} />
+        </Suspense>
       </body>
     </html>
   )
