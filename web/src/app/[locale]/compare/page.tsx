@@ -178,7 +178,7 @@ function CompareTable({ items, locale, dict }: { items: CompareItem[]; locale: L
       <table className="w-max min-w-full border-separate border-spacing-0 text-sm">
         <thead>
           <tr>
-            <th className={`${rowHead} bg-page`} scope="col">
+            <th className={rowHead} scope="col">
               <span className="sr-only">{t.title}</span>
             </th>
             {items.map((i) => (
