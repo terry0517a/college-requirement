@@ -56,8 +56,8 @@ def test_writes_programs_requirement_and_sieve(db, httpx_mock):
     rows = db.execute("""select p.name_zh, q.requirement, s.sieve, s.tiebreak, q.year, q.pathway, q.system_code
                          from admission_requirement q join program p on p.id = q.program_id
                          join admission_stat s on s.program_id = q.program_id and s.year = q.year and s.pathway = q.pathway
-                         order by p.name_zh""").fetchall()
-    assert [x[0] for x in rows] == ["中國文學系", "某學系", "戲劇學系(女)", "戲劇學系(男)"]
+                         order by p.name_zh collate "C" """).fetchall()
+    assert [x[0] for x in rows] == ["中國文學系", "戲劇學系(女)", "戲劇學系(男)", "某學系"]
     req = rows[0][1]
     assert req["cac_code"] == "001012" and req["quota"] == 23 and req["thresholds"]["國文"] == "前標"
     assert req["sources"]["sieve_image"] == image_url(115, "001")
