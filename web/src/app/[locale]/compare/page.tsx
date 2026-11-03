@@ -99,7 +99,7 @@ function CompareTable({ items, locale, dict }: { items: CompareItem[]; locale: L
                     {t.sieveStep
                       .replace('{order}', String(s.order))
                       .replace('{label}', s.label)
-                      .replace('{score}', String(s.min_score))}
+                      .replace('{score}', String(s.min_score ?? '—'))}
                   </li>
                 ))}
               </ul>
