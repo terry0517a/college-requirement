@@ -34,7 +34,7 @@
    alter role web_reader with login password '<自訂強密碼>';
    ```
 
-   `web_reader` 角色已由 migration 0006 建立，它繼承 `anon` 的權限，只能讀取公開的資料表；內部資料表 `fetch_log`、`cac_fetch` 則依賴 Row Level Security（資料列層級權限）保護，目前每張資料表都已啟用 RLS。
+   `web_reader` 角色已由 migration 0006 建立，它不繼承 `anon`，只被明確授予讀取公開資料表的權限（每張表另有一條專屬的 RLS 讀取政策）；內部資料表 `fetch_log`、`cac_fetch` 則依賴 Row Level Security（資料列層級權限）保護，目前每張資料表都已啟用 RLS。
 
    接著取得連線字串：到 Supabase 專案 → Settings → Database → Connection string，Method 選 **Transaction pooler**（port 6543）。使用者名稱格式為 `web_reader.<project-ref>`（`<project-ref>` 就是 Supabase 網址中的那一串英數字），把密碼換成上面設定的強密碼，得到的字串即為 `DATABASE_URL`。
 
