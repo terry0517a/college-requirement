@@ -37,6 +37,18 @@ jobs:
 
   web:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -53,6 +65,14 @@ jobs:
       - name: Typecheck
         working-directory: web
         run: npm run typecheck
+      - name: Create test database
+        working-directory: web
+        env:
+          PGHOST: localhost
+          PGUSER: postgres
+        run: bash scripts/test-db.sh
       - name: Unit tests
         working-directory: web
+        env:
+          DATABASE_URL: postgresql://postgres@localhost/collegedata_web_test
         run: npm test
