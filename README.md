@@ -23,6 +23,16 @@ uv run pytest
 
 `web/` 是 Next.js 16 網站（中英雙語，路由 `/zh`、`/en`）。需要 Node 22。
 
+第一次在本機看網站前，先建立並載入開發用資料庫 `collegedata_dev`（只需做一次）：
+
+```bash
+createdb collegedata_dev
+for f in supabase/migrations/*.sql; do psql -v ON_ERROR_STOP=1 -d collegedata_dev -f "$f"; done
+cd pipeline && for j in hipo uac; do DATABASE_URL=postgresql://localhost/collegedata_dev uv run collegedata run $j; done; cd ..
+```
+
+（其他 job 同理；`scorecard` 需要 `SCORECARD_API_KEY`。）
+
 ```bash
 cd web
 npm ci

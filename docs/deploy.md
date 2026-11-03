@@ -46,11 +46,11 @@
 
    確認後按 Deploy。部署完成後，到專案 Settings → Domains 可看到實際網址；若與 `SITE_URL` 不同，回到 Settings → Environment Variables 修改 `SITE_URL`，再到 Deployments 頁重新部署一次。
 
-3. **Vercel：設定資料庫同區的執行區域。** 到 Vercel 專案 Settings → Functions → Region，選美國區域 Washington, D.C., USA（East）（代號 `iad1`），與步驟 1 的 Supabase 專案（East US）相同，網站每次查詢才會快。
+3. **Vercel：設定資料庫同區的執行區域。** 到 Vercel 專案 Settings → Functions → Region，選美國區域 Washington, D.C., USA（East）（代號 `iad1`），與建立 Supabase 專案時選的區域相同（例如 East US），網站每次查詢才會快。
 
-4. **首次部署前，必須已完成管線的初始載入**（見上方步驟 5）。網站在建置時會讀取資料庫，若資料庫還是空的，頁面會沒有內容。
+4. **首次部署前，必須已完成管線的初始載入**（見本文件上方第一節的第 5 步）。網站在建置時會讀取資料庫，若資料庫還是空的，頁面會沒有內容。
 
-5. **每週資料更新後，網站最慢一天內反映。** 網站的頁面會快取（`cacheLife('days')`），管線寫入新資料後不會立即顯示，最慢一天內會更新。
+5. **每週資料更新後，網站最慢一天內反映。** 網站頁面有快取，管線寫入新資料後不會立即顯示；多數頁面數小時內更新，最慢一天內反映。
 
 ## 排程
 
