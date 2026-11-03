@@ -16,6 +16,8 @@ cd pipeline && uv sync
 uv run pytest
 ```
 
+執行 Scorecard job 需要環境變數 `SCORECARD_API_KEY`（見 `pipeline/.env.example`）。
+
 ## 文件
 
 - [部署說明](docs/deploy.md)

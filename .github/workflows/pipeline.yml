@@ -5,6 +5,7 @@ on:
     - cron: "0 3 * * 1"   # hipo, weekly Monday
     - cron: "0 4 * * 2"   # openalex, weekly Tuesday
     - cron: "0 5 * * 3"   # uac, weekly Wednesday
+    - cron: "0 6 * * 4"   # scorecard, weekly Thursday
   workflow_dispatch:
     inputs:
       job:
@@ -15,6 +16,7 @@ on:
           - hipo
           - uac
           - openalex
+          - scorecard
 
 permissions:
   issues: write
@@ -42,6 +44,7 @@ jobs:
               "0 3 * * 1") JOB=hipo ;;
               "0 4 * * 2") JOB=openalex ;;
               "0 5 * * 3") JOB=uac ;;
+              "0 6 * * 4") JOB=scorecard ;;
               *) echo "Unknown schedule: $SCHEDULE" >&2; exit 1 ;;
             esac
           fi
@@ -60,6 +63,7 @@ jobs:
           JOB: ${{ steps.job.outputs.job }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           OPENALEX_API_KEY: ${{ secrets.OPENALEX_API_KEY }}
+          SCORECARD_API_KEY: ${{ secrets.SCORECARD_API_KEY }}
         run: uv run collegedata run "$JOB"
       - name: Open issue on failure
         if: failure()

@@ -7,9 +7,19 @@ from collegedata.runner import run_job
 FIXDIR = pathlib.Path(__file__).with_name("fixtures")
 NTU = json.loads((FIXDIR / "openalex_ntu.json").read_text())
 HIPO = [r for r in json.loads((FIXDIR / "hipo_sample.json").read_text()) if r["domains"][0] == "ntu.edu.tw"]
+FIX_ALL = json.loads((FIXDIR / "hipo_sample.json").read_text())
+
+
+def _seed_programs(db):
+    """OpenAlex only looks at institutions that have programs; give every one an 'all' program."""
+    db.execute("""insert into program (institution_id, code, name_en, source_id, source_url, fetched_at)
+                  select id, 'all', 'All undergraduate programs', %s, 'http://x', now() from institution
+                  on conflict do nothing""", (ensure_source(db, "hipo"),))
+
 
 def test_writes_top10_strengths_and_ids(db, httpx_mock):
     upsert_institutions(db, HIPO, ensure_source(db, "hipo"), "http://x")
+    _seed_programs(db)
     httpx_mock.add_response(url=re.compile(r"https://api\.openalex\.org/institutions\?.*"), json=NTU)
     r = run_job(OpenAlexJob(client=httpx.Client()), db)
     assert r.status == "success" and r.rows_written == 10
@@ -19,6 +29,7 @@ def test_writes_top10_strengths_and_ids(db, httpx_mock):
 
 def test_skips_low_works_match(db, httpx_mock):
     upsert_institutions(db, HIPO, ensure_source(db, "hipo"), "http://x")
+    _seed_programs(db)
     low = json.loads(json.dumps(NTU)); low["results"][0]["works_count"] = 5
     httpx_mock.add_response(url=re.compile(r"https://api\.openalex\.org/institutions\?.*"), json=low)
     r = run_job(OpenAlexJob(client=httpx.Client()), db)
@@ -27,6 +38,7 @@ def test_skips_low_works_match(db, httpx_mock):
 
 def test_query_includes_country_filter_and_key(db, httpx_mock):
     upsert_institutions(db, HIPO, ensure_source(db, "hipo"), "http://x")
+    _seed_programs(db)
     httpx_mock.add_response(url=re.compile(r"^(?=.*country_code(?::|%3A)TW)(?=.*api_key=k1).*$"), json=NTU)
     assert run_job(OpenAlexJob(client=httpx.Client(), api_key="k1"), db).status == "success"
     urls = [x[0] for x in db.execute("select source_url from strength").fetchall()]
@@ -41,6 +53,7 @@ def _ntu_id(db):
 
 def test_rerun_is_idempotent(db, httpx_mock):
     upsert_institutions(db, HIPO, ensure_source(db, "hipo"), "http://x")
+    _seed_programs(db)
     httpx_mock.add_response(url=URL_RE, json=NTU, is_reusable=True)
     assert run_job(OpenAlexJob(client=httpx.Client()), db).status == "success"
     assert run_job(OpenAlexJob(client=httpx.Client()), db).status == "success"
@@ -49,6 +62,7 @@ def test_rerun_is_idempotent(db, httpx_mock):
 
 def test_refresh_removes_stale_topics(db, httpx_mock):
     upsert_institutions(db, HIPO, ensure_source(db, "hipo"), "http://x")
+    _seed_programs(db)
     db.execute("""insert into strength (institution_id, topic_id, topic_name, field_name, works_count, cited_by_count,
                   rank, source_id, source_url, fetched_at)
                   values (%s, 'https://openalex.org/T0', 'Bogus', 'Bogus', 1, 0, 11, %s, 'http://x', now())""",
@@ -60,15 +74,18 @@ def test_refresh_removes_stale_topics(db, httpx_mock):
 
 def test_skips_openalex_id_owned_by_other_institution(db, httpx_mock):
     upsert_institutions(db, HIPO + [OLD], ensure_source(db, "hipo"), "http://x")
-    db.execute("update institution set openalex_id=%s where domain='ntu.edu.tw'", (NTU["results"][0]["id"],))
+    _seed_programs(db)
+    db.execute("update institution set openalex_id=%s, openalex_checked_at=now() where domain='ntu.edu.tw'",
+               (NTU["results"][0]["id"],))
     httpx_mock.add_response(url=URL_RE, json=NTU)
-    r = run_job(OpenAlexJob(client=httpx.Client(), limit=1), db)  # only the NULL-openalex_id one is selected
+    r = run_job(OpenAlexJob(client=httpx.Client(), limit=1), db)  # only the never-checked one is selected
     assert r.status == "success" and r.rows_written == 0
     assert db.execute("select openalex_id from institution where domain='old.ntu.tw'").fetchone()[0] is None
     assert db.execute("select count(*) from strength").fetchone()[0] == 0
 
 def test_rate_limit_stops_cleanly(db, httpx_mock):
     upsert_institutions(db, HIPO + [OLD], ensure_source(db, "hipo"), "http://x")
+    _seed_programs(db)
     httpx_mock.add_response(url=URL_RE, status_code=429)
     r = run_job(OpenAlexJob(client=httpx.Client()), db)
     assert r.status == "success" and r.rows_written == 0
@@ -77,6 +94,7 @@ def test_rate_limit_stops_cleanly(db, httpx_mock):
 def test_http_error_for_one_institution_continues(db, httpx_mock, monkeypatch):
     monkeypatch.setattr("collegedata.jobs.openalex.time.sleep", lambda s: None)
     upsert_institutions(db, HIPO + [OLD], ensure_source(db, "hipo"), "http://x")
+    _seed_programs(db)
     httpx_mock.add_response(url=URL_RE, status_code=500)
     httpx_mock.add_response(url=URL_RE, json=NTU)
     r = run_job(OpenAlexJob(client=httpx.Client()), db)
@@ -85,12 +103,14 @@ def test_http_error_for_one_institution_continues(db, httpx_mock, monkeypatch):
 def test_batch_size_from_env(db, httpx_mock, monkeypatch):
     monkeypatch.setenv("OPENALEX_BATCH_SIZE", "1")
     upsert_institutions(db, HIPO + [OLD], ensure_source(db, "hipo"), "http://x")
+    _seed_programs(db)
     httpx_mock.add_response(url=URL_RE, json=NTU)
     assert run_job(OpenAlexJob(client=httpx.Client()), db).status == "success"
     assert len(httpx_mock.get_requests()) == 1
 
 def test_refresh_order_oldest_strength_first(db, httpx_mock):
     upsert_institutions(db, HIPO + [OLD], ensure_source(db, "hipo"), "http://x")
+    _seed_programs(db)
     src = ensure_source(db, "openalex")
     db.execute("update institution set openalex_id = 'https://openalex.org/I' || id")
     for domain, ts in (("ntu.edu.tw", "2020-01-01"), ("old.ntu.tw", "2025-01-01")):
@@ -103,6 +123,7 @@ def test_refresh_order_oldest_strength_first(db, httpx_mock):
 
 def test_null_field_name_stored_as_unknown(db, httpx_mock):
     upsert_institutions(db, HIPO, ensure_source(db, "hipo"), "http://x")
+    _seed_programs(db)
     data = json.loads(json.dumps(NTU)); data["results"][0]["topics"][0]["field"] = None
     httpx_mock.add_response(url=URL_RE, json=data)
     assert run_job(OpenAlexJob(client=httpx.Client()), db).status == "success"
@@ -110,6 +131,7 @@ def test_null_field_name_stored_as_unknown(db, httpx_mock):
 
 def test_ror_source_url_and_topic_order(db, httpx_mock):
     upsert_institutions(db, HIPO, ensure_source(db, "hipo"), "http://x")
+    _seed_programs(db)
     httpx_mock.add_response(url=URL_RE, json=NTU)
     assert run_job(OpenAlexJob(client=httpx.Client(), api_key="k1"), db).status == "success"
     assert db.execute("select ror_id from institution where domain='ntu.edu.tw'").fetchone()[0] == NTU["results"][0]["ror"]
@@ -119,3 +141,27 @@ def test_ror_source_url_and_topic_order(db, httpx_mock):
     expected = sorted((t["count"] for t in NTU["results"][0]["topics"]), reverse=True)[:10]
     assert counts == expected
     assert all("api_key" not in u and "search=" in u for _, u in rows)
+
+def test_all_requests_failing_marks_job_failed(db, httpx_mock, monkeypatch):
+    monkeypatch.setattr("collegedata.jobs.openalex.time.sleep", lambda s: None)
+    upsert_institutions(db, HIPO, ensure_source(db, "hipo"), "http://x")
+    _seed_programs(db)
+    httpx_mock.add_response(url=URL_RE, status_code=500, is_reusable=True)
+    r = run_job(OpenAlexJob(client=httpx.Client()), db)
+    assert r.status == "failed" and "OpenAlexAllFailed" in r.error
+
+def test_checked_at_set_and_unchecked_come_first(db, httpx_mock, monkeypatch):
+    monkeypatch.setattr("collegedata.jobs.openalex.time.sleep", lambda s: None)
+    upsert_institutions(db, FIX_ALL, ensure_source(db, "hipo"), "http://x")
+    _seed_programs(db)
+    db.execute("update institution set openalex_checked_at = now() - interval '1 day' where domain='ntu.edu.tw'")
+    httpx_mock.add_response(url=URL_RE, json=NTU, is_reusable=True)
+    run_job(OpenAlexJob(client=httpx.Client(), limit=2), db)
+    assert db.execute("select openalex_checked_at from institution where domain='ntu.edu.tw'").fetchone()[0] < \
+        db.execute("select min(openalex_checked_at) from institution where domain<>'ntu.edu.tw'").fetchone()[0]
+
+def test_institution_without_programs_is_not_requested(db, httpx_mock):
+    upsert_institutions(db, HIPO, ensure_source(db, "hipo"), "http://x")
+    r = run_job(OpenAlexJob(client=httpx.Client()), db)
+    assert r.status == "success" and r.rows_written == 0
+    assert httpx_mock.get_requests() == []

@@ -13,16 +13,20 @@ DEFAULT_BATCH_SIZE = 800
 
 log = logging.getLogger(__name__)
 
-# Unlinked institutions first (by id), then the ones whose topics are oldest,
-# so successive runs cycle through every institution within the daily budget.
+# Never-checked institutions first (by id), then the least recently checked, so
+# successive runs cycle through every institution within the daily budget and
+# institutions that can never be matched do not block the front of the queue.
+# Only institutions with at least one program are shown on the site, so others are skipped.
 SELECT_SQL = """
 select i.id, i.country_code, i.name_en
 from institution i
 left join (select institution_id, max(fetched_at) as last_fetched
            from strength group by institution_id) s on s.institution_id = i.id
 where i.name_en is not null
-order by (i.openalex_id is null) desc,
-         case when i.openalex_id is null then i.id end,
+  and exists (select 1 from program p where p.institution_id = i.id)
+order by (i.openalex_checked_at is null) desc,
+         case when i.openalex_checked_at is null then i.id end,
+         i.openalex_checked_at asc,
          s.last_fetched asc nulls first,
          i.id
 limit %s
@@ -33,6 +37,10 @@ insert into strength (institution_id, topic_id, topic_name, field_name, works_co
                       cited_by_count, rank, source_id, source_url, fetched_at)
 values (%s, %s, %s, %s, %s, 0, %s, %s, %s, now())
 """
+
+
+class OpenAlexAllFailed(Exception):
+    """Every request made in a run failed (HTTP error or transport error)."""
 
 
 class OpenAlexJob:
@@ -53,20 +61,29 @@ class OpenAlexJob:
         source_id = ensure_source(conn, "openalex")
         rows = conn.execute(SELECT_SQL, (self.batch_size,)).fetchall()
         total = 0
+        attempted = succeeded = 0
         for i, (inst_id, cc, name_en) in enumerate(rows):
             try:
                 with conn.transaction():
-                    total += self._process(conn, client, inst_id, cc, name_en, source_id)
+                    written = self._process(conn, client, inst_id, cc, name_en, source_id)
+                    conn.execute("update institution set openalex_checked_at = now() where id = %s", (inst_id,))
+                total += written
+                attempted += 1
+                succeeded += 1
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code == 429:
                     log.warning("OpenAlex: rate limit / budget exhausted at %s; stopping, next run continues",
                                 name_en)
                     break
+                attempted += 1
                 log.warning("OpenAlex: HTTP %s for %s; skipping", exc.response.status_code, name_en)
             except httpx.TransportError as exc:
+                attempted += 1
                 log.warning("OpenAlex: transport error for %s (%s); skipping", name_en, exc)
             if i < len(rows) - 1:
                 time.sleep(1)
+        if attempted >= 1 and succeeded == 0:
+            raise OpenAlexAllFailed(f"{attempted} attempted, 0 succeeded")
         return total
 
     def _process(self, conn, client, inst_id: int, cc: str, name_en: str, source_id: int) -> int:
