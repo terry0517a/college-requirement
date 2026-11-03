@@ -6,7 +6,9 @@ import SiteHeader from '@/components/SiteHeader'
 import SiteFooter from '@/components/SiteFooter'
 import '../globals.css'
 
+// SITE_URL (e.g. https://example.com) is also read by the sitemap.
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.SITE_URL ?? 'http://localhost:3000'),
   title: { default: '大學資訊整合 / University Finder', template: '%s | University Finder' },
 }
 

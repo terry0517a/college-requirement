@@ -38,11 +38,10 @@ export type SchoolDetail = {
       sat: UsSatRequirement['sat'] | null
       act: UsSatRequirement['act'] | null
     }[]
-    source: Src | null
-    fetchedAt: string | null
+    sources: Prov[]
   } | null
   costs: { year: number; local: number | null; outOfState: number | null; currency: string }[]
-  costSource: Prov | null
+  costSources: Prov[]
   stat: {
     year: number
     studentSize: number | null
@@ -122,7 +121,9 @@ export async function getSchool(id: number): Promise<SchoolDetail | null> {
       exists (select 1 from admission_stat a where a.program_id = p.id and a.pathway = 'tw_distribution') as has_dist
     from program p left join field f on f.code = p.field_code
     where p.institution_id = ${id}
-    order by (p.code = 'all') desc nulls last, p.code, coalesce(p.name_zh, p.name_en), p.id`
+    order by (${country} = 'US' and p.code = 'all') desc,
+             case when ${country} = 'US' then p.code end,
+             coalesce(p.name_zh, p.name_en), p.id`
 
   const programs = progs.map((p) => ({
     id: p.id,
@@ -158,49 +159,52 @@ export async function getSchool(id: number): Promise<SchoolDetail | null> {
         order by year desc limit 3)
       select ys.year,
         (select a.admission_rate::float8 from admission_stat a
-          where a.program_id = ${allProgram.id} and a.pathway = 'us_freshman' and a.year = ys.year limit 1) as rate,
+          where a.program_id = ${allProgram.id} and a.pathway = 'us_freshman' and a.year = ys.year
+          order by a.fetched_at desc, a.id desc limit 1) as rate,
         (select r.requirement->'sat' from admission_requirement r
-          where r.program_id = ${allProgram.id} and r.pathway = 'us_freshman' and r.year = ys.year limit 1) as sat,
+          where r.program_id = ${allProgram.id} and r.pathway = 'us_freshman' and r.year = ys.year
+          order by r.fetched_at desc, r.id desc limit 1) as sat,
         (select r.requirement->'act' from admission_requirement r
-          where r.program_id = ${allProgram.id} and r.pathway = 'us_freshman' and r.year = ys.year limit 1) as act
+          where r.program_id = ${allProgram.id} and r.pathway = 'us_freshman' and r.year = ys.year
+          order by r.fetched_at desc, r.id desc limit 1) as act
       from ys order by ys.year desc`
-    const [src] = await sql<{ name: string; url: string; fetched_at: Date | string }[]>`
-      select s.name, x.source_url as url, x.fetched_at from (
+    const srcs = await sql<{ name: string; url: string; fetched_at: Date | string }[]>`
+      select s.name, x.source_url as url, max(x.fetched_at) as fetched_at from (
         select source_id, source_url, fetched_at, year from admission_stat
           where program_id = ${allProgram.id} and pathway = 'us_freshman'
         union all
         select source_id, source_url, fetched_at, year from admission_requirement
           where program_id = ${allProgram.id} and pathway = 'us_freshman') x
-      join source s on s.id = x.source_id order by x.year desc, x.fetched_at desc limit 1`
+      join source s on s.id = x.source_id
+      where x.year = any(${years.map((y) => y.year)})
+      group by s.id, s.name, x.source_url order by s.id, x.source_url`
     us = {
       allProgramId: allProgram.id,
       years: years.map((y) => ({ year: y.year, admissionRate: y.rate, sat: y.sat, act: y.act })),
-      source: src ? { name: src.name, url: src.url } : null,
-      fetchedAt: src ? iso(src.fetched_at) : null,
+      sources: srcs.map((r) => ({ name: r.name, url: r.url, fetchedAt: iso(r.fetched_at) })),
     }
   }
 
   const costRows = await sql<
-    { year: number; local: number | null; oos: number | null; currency: string; name: string; url: string; fetched_at: Date | string }[]
+    { year: number; local: number | null; oos: number | null; currency: string }[]
   >`
     select c.year,
       max(c.tuition) filter (where c.residency = 'local')::float8 as local,
       max(c.tuition) filter (where c.residency = 'out_of_state')::float8 as oos,
-      max(c.currency) as currency,
-      (array_agg(s.name order by (c.residency = 'out_of_state') desc))[1] as name,
-      (array_agg(c.source_url order by (c.residency = 'out_of_state') desc))[1] as url,
-      max(c.fetched_at) as fetched_at
-    from cost c join source s on s.id = c.source_id
+      max(c.currency) as currency
+    from cost c
     where c.institution_id = ${id} and c.residency in ('local', 'out_of_state')
     group by c.year order by c.year desc limit 3`
-  const costs = costRows.map((c) => ({ year: c.year, local: c.local, outOfState: c.oos, currency: c.currency, }))
-  const costSource: Prov | null = costRows[0]
-    ? {
-        name: costRows[0].name,
-        url: costRows[0].url,
-        fetchedAt: iso(costRows.reduce((m, c) => (new Date(c.fetched_at) > new Date(m) ? c.fetched_at : m), costRows[0].fetched_at)),
-      }
-    : null
+  const costs = costRows.map((c) => ({ year: c.year, local: c.local, outOfState: c.oos, currency: c.currency }))
+  const costSrcRows = costs.length
+    ? await sql<ProvRow[]>`
+        select s.name, c.source_url as url, max(c.fetched_at) as fetched_at
+        from cost c join source s on s.id = c.source_id
+        where c.institution_id = ${id} and c.residency in ('local', 'out_of_state')
+          and c.year = any(${costs.map((c) => c.year)})
+        group by s.id, s.name, c.source_url order by s.id, c.source_url`
+    : []
+  const costSources: Prov[] = costSrcRows.map((r) => ({ name: r.name, url: r.url, fetchedAt: iso(r.fetched_at) }))
 
   const [st] = await sql<
     {
@@ -259,10 +263,10 @@ export async function getSchool(id: number): Promise<SchoolDetail | null> {
   const sources: SchoolDetail['sources'] = [
     { block: 'institution', name: inst.source_name, url: inst.source_url, fetchedAt: iso(inst.fetched_at) },
   ]
-  if (us?.source && us.fetchedAt) sources.push({ block: 'admission', ...us.source, fetchedAt: us.fetchedAt })
+  for (const x of us?.sources ?? []) sources.push({ block: 'admission', ...x })
   const twSources = twSourceRows.map((r) => ({ name: r.name, url: r.url, fetchedAt: iso(r.fetched_at) }))
   for (const s of twSources) sources.push({ block: 'admission', ...s })
-  if (costSource) sources.push({ block: 'cost', ...costSource })
+  for (const x of costSources) sources.push({ block: 'cost', ...x })
   if (stat) sources.push({ block: 'stat', ...stat.source, fetchedAt: stat.fetchedAt })
   if (strengths.source && strengths.fetchedAt) sources.push({ block: 'strength', ...strengths.source, fetchedAt: strengths.fetchedAt })
 
@@ -283,7 +287,7 @@ export async function getSchool(id: number): Promise<SchoolDetail | null> {
     twSources,
     us,
     costs,
-    costSource,
+    costSources,
     stat,
     strengths,
     sources,

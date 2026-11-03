@@ -25,10 +25,9 @@ export async function generateMetadata({ params }: PageProps<'/[locale]/schools/
   if (id === null) notFound()
   const school = await getSchoolCached(id)
   if (!school) notFound()
-  const dict = await getDictionary(locale)
   const i = school.institution
   return {
-    title: `${displayName(locale, i.nameZh, i.nameEn)} | ${dict.site.name}`,
+    title: displayName(locale, i.nameZh, i.nameEn),
     alternates: { languages: { 'zh-Hant-TW': `/zh/schools/${id}`, en: `/en/schools/${id}` } },
   }
 }
@@ -124,7 +123,10 @@ function SchoolView({ school, locale, dict }: { school: SchoolDetail; locale: Lo
 
         <section id="admissions" className="scroll-mt-16 space-y-3">
           <h2 className="text-xl font-semibold">{t.admissions}</h2>
-          {school.us ? (
+          {i.country === 'US' ? (
+            !school.us ? (
+              <NoData label={dict.common.noData} />
+            ) : (
             <>
               {school.us.years.length === 0 ||
               school.us.years.every((y) => y.admissionRate === null && y.sat === null && y.act === null) ? (
@@ -164,16 +166,11 @@ function SchoolView({ school, locale, dict }: { school: SchoolDetail; locale: Lo
                   {usFields.join(locale === 'zh' ? '、' : ', ')}
                 </p>
               )}
-              {school.us.source && school.us.fetchedAt && (
-                <SourceNote
-                  name={school.us.source.name}
-                  url={school.us.source.url}
-                  fetchedAt={school.us.fetchedAt}
-                  locale={locale}
-                  labels={labels}
-                />
-              )}
+              {school.us.sources.map((x) => (
+                <SourceNote key={`${x.name}-${x.url}`} name={x.name} url={x.url} fetchedAt={x.fetchedAt} locale={locale} labels={labels} />
+              ))}
             </>
+            )
           ) : (
             <>
               <div className="overflow-x-auto">
@@ -216,7 +213,7 @@ function SchoolView({ school, locale, dict }: { school: SchoolDetail; locale: Lo
                 </table>
               </div>
               {school.twSources.map((s) => (
-                <SourceNote key={s.name} name={s.name} url={s.url} fetchedAt={s.fetchedAt} locale={locale} labels={labels} />
+                <SourceNote key={`${s.name}-${s.url}`} name={s.name} url={s.url} fetchedAt={s.fetchedAt} locale={locale} labels={labels} />
               ))}
             </>
           )}
@@ -261,15 +258,9 @@ function SchoolView({ school, locale, dict }: { school: SchoolDetail; locale: Lo
                 </table>
               </div>
               <p className="text-xs text-subtle">{t.costNote}</p>
-              {school.costSource && (
-                <SourceNote
-                  name={school.costSource.name}
-                  url={school.costSource.url}
-                  fetchedAt={school.costSource.fetchedAt}
-                  locale={locale}
-                  labels={labels}
-                />
-              )}
+              {school.costSources.map((x) => (
+                <SourceNote key={`${x.name}-${x.url}`} name={x.name} url={x.url} fetchedAt={x.fetchedAt} locale={locale} labels={labels} />
+              ))}
             </>
           ) : (
             <NoData label={dict.common.noData} />
@@ -312,7 +303,7 @@ function SchoolView({ school, locale, dict }: { school: SchoolDetail; locale: Lo
           <h2 className="text-xl font-semibold">{t.sources}</h2>
           <ul className="space-y-2">
             {school.sources.map((s) => (
-              <li key={`${s.block}-${s.name}`} className="text-sm">
+              <li key={`${s.block}-${s.name}-${s.url}`} className="text-sm">
                 <span className="font-medium">{blockLabel[s.block]}</span>
                 <SourceNote name={s.name} url={s.url} fetchedAt={s.fetchedAt} locale={locale} labels={labels} />
               </li>
