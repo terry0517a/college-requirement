@@ -55,12 +55,12 @@ export { parseId } from '@/lib/ids'
 
 const iso = (d: Date | string) => new Date(d).toISOString()
 
-export async function listSchoolIdsForPrerender(limit: number): Promise<number[]> {
+export async function listSchoolIdsForPrerender(limit: number, fallback = true): Promise<number[]> {
   const rows = await sql<{ id: number }[]>`
     select i.id from institution i
     join program p on p.institution_id = i.id
     group by i.id order by count(*) desc, i.id limit ${limit}`
-  return rows.length ? rows.map((r) => r.id) : [1]
+  return rows.length || !fallback ? rows.map((r) => r.id) : [1] // [1]: generateStaticParams must not be empty
 }
 
 type InstRow = {

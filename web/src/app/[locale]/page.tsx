@@ -1,8 +1,15 @@
+import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { hasLocale } from '@/i18n/config'
 import { getDictionary } from '@/i18n/dictionaries'
 import { getFields } from '@/lib/data'
+
+export async function generateMetadata({ params }: PageProps<'/[locale]'>): Promise<Metadata> {
+  const { locale } = await params
+  if (!hasLocale(locale)) notFound()
+  return { alternates: { languages: { 'zh-Hant-TW': '/zh', en: '/en' } } }
+}
 
 export default async function HomePage({ params }: PageProps<'/[locale]'>) {
   const { locale } = await params

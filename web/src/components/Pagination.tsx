@@ -15,7 +15,8 @@ export default function Pagination({
   dict: Dictionary
 }) {
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
-  if (pages <= 1) return null
+  const pastEnd = total > 0 && params.page > pages
+  if (pages <= 1 && !pastEnd) return null
   const href = (page: number) => {
     const qs = toQueryString(params, { page })
     return `/${locale}/explore${qs ? `?${qs}` : ''}`
@@ -24,7 +25,11 @@ export default function Pagination({
   const cls = 'rounded border border-line px-3 py-1 hover:border-brand'
   return (
     <nav aria-label={t.pagination} className="flex flex-wrap items-center justify-between gap-2 text-sm">
-      {params.page > 1 ? (
+      {pastEnd ? (
+        <Link href={href(pages)} prefetch={false} className={cls}>
+          {t.page.replace('{page}', String(pages)).replace('{pages}', String(pages))}
+        </Link>
+      ) : params.page > 1 ? (
         <Link href={href(params.page - 1)} prefetch={false} className={cls} rel="prev">
           {t.prev}
         </Link>

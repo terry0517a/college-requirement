@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import type { Locale } from '@/i18n/config'
 
@@ -19,7 +19,16 @@ export default function RegionSelect({ locale, labels }: { locale: Locale; label
 
 function WithParams({ locale, labels }: { locale: Locale; labels: Labels }) {
   const r = useSearchParams().get('region')
-  return <Select locale={locale} labels={labels} current={r === 'tw' || r === 'us' ? r : 'all'} />
+  // Without ?region= fall back to the cookie written on the last choice. Read after
+  // mount so the first client render matches the server HTML.
+  const [saved, setSaved] = useState<Region>('all')
+  useEffect(() => {
+    const m = document.cookie.match(/(?:^|;\s*)region=(tw|us|all)(?:;|$)/)
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- cookie is only readable after mount
+    if (m) setSaved(m[1] as Region)
+  }, [])
+  const current: Region = r === 'tw' || r === 'us' || r === 'all' ? r : saved
+  return <Select locale={locale} labels={labels} current={current} />
 }
 
 function Select({

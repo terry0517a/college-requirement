@@ -3,7 +3,7 @@
   "nav": { "explore": "Explore", "compare": "Compare", "about": "About" },
   "lang": { "switchTo": "中文" },
   "region": { "label": "Region", "all": "All", "tw": "Taiwan", "us": "United States" },
-  "home": { "searchPlaceholder": "Search by school name", "searchButton": "Search", "browseByRegion": "Browse by region", "browseByField": "Browse by field of study" },
+  "home": { "searchPlaceholder": "Search by school or program name", "searchButton": "Search", "browseByRegion": "Browse by region", "browseByField": "Browse by field of study" },
   "common": { "noData": "Not enough data", "source": "Source", "fetchedAt": "Fetched" },
   "notFound": { "title": "Page not found", "back": "Back to home" },
   "explore": { "title": "Explore schools", "keyword": "Keyword", "keywordPlaceholder": "School or program name", "field": "Field of study", "fieldAny": "Any", "control": "Control", "controlAny": "Any", "public": "Public", "private": "Private", "maxTuition": "Max tuition (USD)", "size": "School size", "sizeAny": "Any", "small": "Small (under 5,000)", "medium": "Medium (5,000–15,000)", "large": "Large (over 15,000)", "apply": "Apply filters", "reset": "Reset", "loading": "Loading…", "empty": "No schools match these filters. Try adjusting them.", "total": "Schools found: {n}", "prev": "Previous", "next": "Next", "page": "Page {page} of {pages}", "students": "Students", "tuition": "Tuition", "tuitionUsEstimate": "Estimate from out-of-state tuition ({year})", "matchedPrograms": "Matching programs", "countryTW": "Taiwan", "countryUS": "United States", "pagination": "Pagination" },

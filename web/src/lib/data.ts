@@ -50,11 +50,11 @@ export async function getSchoolCached(id: number) {
   return getSchool(id)
 }
 
-export async function listSchoolIdsForPrerender(limit: number) {
+export async function listSchoolIdsForPrerender(limit: number, fallback = true) {
   'use cache'
   cacheLife('days')
   cacheTag('institutions')
-  return listIds(limit)
+  return listIds(limit, fallback)
 }
 
 export async function getProgramCached(id: number) {
@@ -64,11 +64,11 @@ export async function getProgramCached(id: number) {
   return getProgram(id)
 }
 
-export async function listProgramIdsForPrerender(limit: number) {
+export async function listProgramIdsForPrerender(limit: number, fallback = true) {
   'use cache'
   cacheLife('days')
   cacheTag('institutions')
-  return listProgramIds(limit)
+  return listProgramIds(limit, fallback)
 }
 
 // ids arrive as a comma-joined string (primitive cache key); rebuilt into numbers inside.

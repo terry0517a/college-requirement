@@ -9,8 +9,8 @@ const MAX_PROGRAMS = 15000
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const [schoolIds, programIds] = await Promise.all([
-    listSchoolIdsForPrerender(MAX_SCHOOLS),
-    listProgramIdsForPrerender(MAX_PROGRAMS),
+    listSchoolIdsForPrerender(MAX_SCHOOLS, false),
+    listProgramIdsForPrerender(MAX_PROGRAMS, false),
   ])
   const paths = [
     '',

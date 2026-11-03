@@ -45,6 +45,11 @@ test('prerender ids: visible schools only, at least one', async () => {
   expect(ids).not.toContain(3)
   expect(ids.slice(0, 2)).toEqual([1, 10])
 })
+test('prerender ids: no fallback id when asked', async () => {
+  expect((await listSchoolIdsForPrerender(5, false)).length).toBeGreaterThan(0)
+  expect(await listSchoolIdsForPrerender(0, false)).toEqual([])
+  expect(await listSchoolIdsForPrerender(0)).toEqual([1])
+})
 test('TW programs are in name order', async () => {
   const s = (await getSchool(1))!
   expect(s.programs.map((p) => p.nameZh)).toEqual(['歷史學系', '資訊工程學系', '醫學系'])

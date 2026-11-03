@@ -1,3 +1,4 @@
+import type { Metadata } from 'next'
 import { Suspense } from 'react'
 import { notFound } from 'next/navigation'
 import { hasLocale, type Locale } from '@/i18n/config'
@@ -7,6 +8,15 @@ import { getFields, searchInstitutionsCached } from '@/lib/data'
 import ExploreFilters from '@/components/ExploreFilters'
 import InstitutionCard from '@/components/InstitutionCard'
 import Pagination from '@/components/Pagination'
+
+export async function generateMetadata({ params }: PageProps<'/[locale]/explore'>): Promise<Metadata> {
+  const { locale } = await params
+  if (!hasLocale(locale)) notFound()
+  return {
+    title: (await getDictionary(locale)).explore.title,
+    alternates: { languages: { 'zh-Hant-TW': '/zh/explore', en: '/en/explore' } },
+  }
+}
 
 export default async function ExplorePage({ params, searchParams }: PageProps<'/[locale]/explore'>) {
   const { locale } = await params
