@@ -1,11 +1,21 @@
+import type { Locale } from '@/i18n/config'
 import type { Dictionary } from '@/i18n/dictionaries'
+import { listSep } from '@/lib/format'
 import type { ProgramDetail } from '@/lib/queries/program'
 
 const th = 'px-3 py-2 text-left font-medium whitespace-nowrap'
 const td = 'px-3 py-2 align-top'
 
 /** UAC placement history: year, lowest admitted score, admitted count, scored subjects with weights. */
-export default function DistributionTable({ rows, dict }: { rows: ProgramDetail['twDistribution']; dict: Dictionary }) {
+export default function DistributionTable({
+  rows,
+  dict,
+  locale,
+}: {
+  rows: ProgramDetail['twDistribution']
+  dict: Dictionary
+  locale: Locale
+}) {
   const t = dict.program
   return (
     <div className="overflow-x-auto">
@@ -25,7 +35,7 @@ export default function DistributionTable({ rows, dict }: { rows: ProgramDetail[
               <td className={`${td} whitespace-nowrap`}>{r.minScore ?? '—'}</td>
               <td className={`${td} whitespace-nowrap`}>{r.admittedCount ?? '—'}</td>
               <td className={`${td} min-w-48`}>
-                {r.subjects.length ? r.subjects.map((s) => `${s.subject} ×${s.weight}`).join('、') : '—'}
+                {r.subjects.length ? r.subjects.map((s) => `${s.subject} ×${s.weight}`).join(listSep(locale)) : '—'}
               </td>
             </tr>
           ))}

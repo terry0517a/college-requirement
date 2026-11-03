@@ -37,7 +37,7 @@ export default function SieveTable({ rows, dict }: { rows: ProgramDetail['twSiev
                       <>
                         <div>{s.label}</div>
                         <div className="text-xs text-subtle">
-                          {t.minScore} {s.min_score}
+                          {t.minScore} {s.min_score ?? '—'}
                         </div>
                       </>
                     ) : (

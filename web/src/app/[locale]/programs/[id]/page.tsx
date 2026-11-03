@@ -6,6 +6,7 @@ import { getDictionary, type Dictionary } from '@/i18n/dictionaries'
 import { getProgramCached, listProgramIdsForPrerender } from '@/lib/data'
 import { displayName } from '@/lib/names'
 import type { ProgramDetail } from '@/lib/queries/program'
+import { safeHttpUrl } from '@/lib/url'
 import { parseId } from '@/lib/queries/school'
 import DistributionTable from '@/components/DistributionTable'
 import NoData from '@/components/NoData'
@@ -63,6 +64,7 @@ function ProgramView({ detail, locale, dict }: { detail: ProgramDetail; locale: 
   const p = detail.program
   const i = detail.institution
   const name = displayName(locale, p.nameZh, p.nameEn)
+  const webUrl = safeHttpUrl(i.webUrl)
   const schoolName = displayName(locale, i.nameZh, i.nameEn)
   const notes = (rows: Prov[]) =>
     rows.map((x) => (
@@ -79,11 +81,11 @@ function ProgramView({ detail, locale, dict }: { detail: ProgramDetail; locale: 
           <Link href={`/${locale}/schools/${i.id}`} prefetch={false} className="text-brand hover:underline">
             {schoolName}
           </Link>
-          {i.webUrl && (
+          {webUrl && (
             <>
               {' · '}
-              <a href={i.webUrl} target="_blank" rel="noopener noreferrer" className="text-sm break-all text-subtle underline">
-                {i.webUrl}
+              <a href={webUrl} target="_blank" rel="noopener noreferrer" className="text-sm break-all text-subtle underline">
+                {webUrl}
               </a>
             </>
           )}
@@ -128,7 +130,7 @@ function ProgramView({ detail, locale, dict }: { detail: ProgramDetail; locale: 
             <h2 className={h2}>{t.distribution}</h2>
             {detail.twDistribution.length > 0 ? (
               <>
-                <DistributionTable rows={detail.twDistribution} dict={dict} />
+                <DistributionTable rows={detail.twDistribution} dict={dict} locale={locale} />
                 <p className="text-xs text-subtle">{t.distNote}</p>
                 {notes(provenance(detail.twDistribution))}
               </>

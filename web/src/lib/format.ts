@@ -34,3 +34,8 @@ export function formatPercent(r: number | null, locale: Locale): string {
 export function formatRange(r: { p25: number; p75: number } | null): string {
   return r === null ? DASH : `${r.p25}–${r.p75}`
 }
+
+/** List separator: 、 for zh, ", " for en. */
+export function listSep(locale: Locale): string {
+  return locale === 'zh' ? '、' : ', '
+}

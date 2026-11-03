@@ -1,8 +1,8 @@
 import type { TwApplyRequirement as Requirement } from '@/db/types'
 import type { Locale } from '@/i18n/config'
 import type { Dictionary } from '@/i18n/dictionaries'
-
-const sep = (locale: Locale) => (locale === 'zh' ? '、' : ', ')
+import { listSep as sep } from '@/lib/format'
+import { safeHttpUrl } from '@/lib/url'
 
 /** One year's CAC requirement: quota, standards, multipliers, extras and the stage 2 schedule. */
 export default function TwApplyRequirement({
@@ -19,20 +19,23 @@ export default function TwApplyRequirement({
   const multipliers = Object.entries(r.multipliers ?? {}).filter(([, v]) => v !== null)
   const extra = Object.entries(r.extra ?? {})
   const s2 = r.stage2
+  const website = safeHttpUrl(s2?.website)
+  const sieveImage = safeHttpUrl(r.sources?.sieve_image)
+  const rulesPage = safeHttpUrl(r.sources?.rules_page)
   const weights = Object.entries(s2?.gsat_weights ?? {}).filter(([, v]) => v !== null)
   const row = (label: string, value: React.ReactNode) => (
     <>
       <dt className="text-subtle">{label}</dt>
-      <dd className="break-words">{value}</dd>
+      <dd className="break-words [overflow-wrap:anywhere]">{value}</dd>
     </>
   )
   return (
     <div className="space-y-4">
-      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-        {row(t.cacCode, r.cac_code)}
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
+        {r.cac_code != null && row(t.cacCode, r.cac_code)}
         {r.group && row(t.group, r.group)}
         {r.gender && row(t.gender, r.gender)}
-        {r.quota !== null && row(t.quota, r.quota)}
+        {r.quota != null && row(t.quota, r.quota)}
         {thresholds.length > 0 && row(t.thresholds, thresholds.map(([k, v]) => `${k} ${v}`).join(sep(locale)))}
         {multipliers.length > 0 && row(t.multipliers, multipliers.map(([k, v]) => `${k} ×${v}`).join(sep(locale)))}
         {extra.length > 0 && row(t.extra, extra.map(([k, v]) => `${k} ${v}`).join(sep(locale)))}
@@ -40,7 +43,7 @@ export default function TwApplyRequirement({
       {s2 ? (
         <div className="space-y-2">
           <h4 className="font-medium">{t.stage2}</h4>
-          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
             {weights.length > 0 && row(t.gsatWeights, weights.map(([k, v]) => `${k} ×${v}`).join(sep(locale)))}
             {s2.stage1_pct != null && row(t.stage1Pct, `${s2.stage1_pct}%`)}
             {s2.tiebreak_order && s2.tiebreak_order.length > 0 && row(t.tiebreakOrder, s2.tiebreak_order.join(' > '))}
@@ -51,9 +54,9 @@ export default function TwApplyRequirement({
             {s2.website &&
               row(
                 t.website,
-                <a href={s2.website} target="_blank" rel="noopener noreferrer" className="break-all text-brand underline">
+                website ? <a href={website} target="_blank" rel="noopener noreferrer" className="break-all text-brand underline">
                   {s2.website}
-                </a>,
+                </a> : s2.website,
               )}
           </dl>
           {s2.items && s2.items.length > 0 && (
@@ -68,8 +71,8 @@ export default function TwApplyRequirement({
                   </tr>
                 </thead>
                 <tbody>
-                  {s2.items.map((it) => (
-                    <tr key={it.name} className="border-b border-line">
+                  {s2.items.map((it, idx) => (
+                    <tr key={`${it.name}-${idx}`} className="border-b border-line">
                       <td className="px-3 py-2">{it.name}</td>
                       <td className="px-3 py-2 whitespace-nowrap">{it.threshold ?? '—'}</td>
                       <td className="px-3 py-2 whitespace-nowrap">{it.pct != null ? `${it.pct}%` : '—'}</td>
@@ -83,18 +86,18 @@ export default function TwApplyRequirement({
       ) : (
         <p className="text-xs text-subtle">{t.stage1Only}</p>
       )}
-      {(r.sources?.sieve_image || r.sources?.rules_page) && (
+      {(sieveImage || rulesPage) && (
         <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-          {r.sources.sieve_image && (
+          {sieveImage && (
             <li>
-              <a href={r.sources.sieve_image} target="_blank" rel="noopener noreferrer" className="text-brand underline">
+              <a href={sieveImage} target="_blank" rel="noopener noreferrer" className="text-brand underline">
                 {t.sieveImage}
               </a>
             </li>
           )}
-          {r.sources.rules_page && (
+          {rulesPage && (
             <li>
-              <a href={r.sources.rules_page} target="_blank" rel="noopener noreferrer" className="text-brand underline">
+              <a href={rulesPage} target="_blank" rel="noopener noreferrer" className="text-brand underline">
                 {t.rulesPage}
               </a>
             </li>

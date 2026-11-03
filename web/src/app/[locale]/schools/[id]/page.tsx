@@ -5,6 +5,7 @@ import { hasLocale, locales, type Locale } from '@/i18n/config'
 import { getDictionary, type Dictionary } from '@/i18n/dictionaries'
 import { getSchoolCached, listSchoolIdsForPrerender } from '@/lib/data'
 import { formatMoney, formatPercent } from '@/lib/format'
+import { safeHttpUrl } from '@/lib/url'
 import { displayName } from '@/lib/names'
 import { parseId, type SchoolDetail } from '@/lib/queries/school'
 import FavoriteButton from '@/components/FavoriteButton'
@@ -49,6 +50,7 @@ function SchoolView({ school, locale, dict }: { school: SchoolDetail; locale: Lo
   const t = dict.school
   const i = school.institution
   const labels = { source: dict.common.source, fetched: dict.common.fetchedAt }
+  const webUrl = safeHttpUrl(i.webUrl)
   const name = displayName(locale, i.nameZh, i.nameEn)
   const otherRaw = locale === 'zh' ? i.nameEn : i.nameZh
   const other = otherRaw && otherRaw !== name ? otherRaw : null
@@ -81,7 +83,7 @@ function SchoolView({ school, locale, dict }: { school: SchoolDetail; locale: Lo
         <section id="summary" className="scroll-mt-16 space-y-3">
           <h1 className="text-2xl font-bold break-words">{name}</h1>
           {other && <p className="text-subtle break-words">{other}</p>}
-          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
             <dt className="text-subtle">{t.country}</dt>
             <dd>{i.country === 'TW' ? dict.explore.countryTW : dict.explore.countryUS}</dd>
             {place && (
@@ -96,12 +98,12 @@ function SchoolView({ school, locale, dict }: { school: SchoolDetail; locale: Lo
                 <dd>{dict.explore[i.control]}</dd>
               </>
             )}
-            {i.webUrl && (
+            {webUrl && (
               <>
                 <dt className="text-subtle">{t.website}</dt>
                 <dd className="break-all">
-                  <a href={i.webUrl} target="_blank" rel="noopener noreferrer" className="text-brand underline">
-                    {i.webUrl}
+                  <a href={webUrl} target="_blank" rel="noopener noreferrer" className="text-brand underline">
+                    {webUrl}
                   </a>
                 </dd>
               </>
@@ -235,7 +237,7 @@ function SchoolView({ school, locale, dict }: { school: SchoolDetail; locale: Lo
           )}
           {school.stat && (
             <div className="space-y-1">
-              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+              <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
                 {school.stat.studentSize !== null && (
                   <>
                     <dt className="text-subtle">{t.students}</dt>
