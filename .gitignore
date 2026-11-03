@@ -6,3 +6,6 @@ __pycache__/
 node_modules/
 .next/
 supabase/.temp/
+
+web/test-results/
+web/playwright-report/

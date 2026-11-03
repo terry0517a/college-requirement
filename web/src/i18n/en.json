@@ -1,0 +1,9 @@
+{
+  "site": { "name": "University Finder", "tagline": "Admission standards, tuition and strong programs for universities in Taiwan and the US, in one place." },
+  "nav": { "explore": "Explore", "compare": "Compare", "about": "About" },
+  "lang": { "switchTo": "中文" },
+  "region": { "label": "Region", "all": "All", "tw": "Taiwan", "us": "United States" },
+  "home": { "searchPlaceholder": "Search by school name", "searchButton": "Search", "browseByRegion": "Browse by region" },
+  "common": { "noData": "Not enough data", "source": "Source", "fetchedAt": "Fetched at" },
+  "notFound": { "title": "Page not found", "back": "Back to home" }
+}

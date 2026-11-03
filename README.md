@@ -6,6 +6,7 @@
 
 - `supabase/`：資料庫 migration
 - `pipeline/`：Python 資料管線與測試
+- `web/`：Next.js 網站
 - `docs/`：部署說明與計畫文件
 
 ## 本機開發
@@ -17,6 +18,17 @@ uv run pytest
 ```
 
 執行 Scorecard job 需要環境變數 `SCORECARD_API_KEY`（見 `pipeline/.env.example`）。
+
+## Web
+
+`web/` 是 Next.js 16 網站（中英雙語，路由 `/zh`、`/en`）。需要 Node 22。
+
+```bash
+cd web
+npm ci
+npm run dev        # http://localhost:3000
+npm run lint && npm run typecheck && npm test
+```
 
 ## 文件
 

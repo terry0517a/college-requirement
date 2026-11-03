@@ -1,0 +1,9 @@
+{
+  "site": { "name": "大學資訊整合", "tagline": "一次查清台灣與美國大學的錄取標準、學費與強項科系。" },
+  "nav": { "explore": "探索", "compare": "比較", "about": "關於" },
+  "lang": { "switchTo": "English" },
+  "region": { "label": "地區", "all": "全部", "tw": "台灣", "us": "美國" },
+  "home": { "searchPlaceholder": "搜尋學校名稱", "searchButton": "搜尋", "browseByRegion": "依地區瀏覽" },
+  "common": { "noData": "資料不足", "source": "資料來源", "fetchedAt": "擷取時間" },
+  "notFound": { "title": "找不到頁面", "back": "回到首頁" }
+}
