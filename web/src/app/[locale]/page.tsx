@@ -2,11 +2,13 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { hasLocale } from '@/i18n/config'
 import { getDictionary } from '@/i18n/dictionaries'
+import { getFields } from '@/lib/data'
 
 export default async function HomePage({ params }: PageProps<'/[locale]'>) {
   const { locale } = await params
   if (!hasLocale(locale)) notFound()
   const dict = await getDictionary(locale)
+  const fields = await getFields()
   const regions = [
     { key: 'tw', label: dict.region.tw },
     { key: 'us', label: dict.region.us },
@@ -32,7 +34,7 @@ export default async function HomePage({ params }: PageProps<'/[locale]'>) {
       </section>
       <section className="space-y-3">
         <h2 className="text-xl font-semibold">{dict.home.browseByRegion}</h2>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           {regions.map((r) => (
             <Link
               key={r.key}
@@ -44,6 +46,22 @@ export default async function HomePage({ params }: PageProps<'/[locale]'>) {
             </Link>
           ))}
         </div>
+      </section>
+      <section className="space-y-3">
+        <h2 className="text-xl font-semibold">{dict.home.browseByField}</h2>
+        <ul className="flex flex-wrap gap-2">
+          {fields.map((f) => (
+            <li key={f.code}>
+              <Link
+                href={`/${locale}/explore?field=${encodeURIComponent(f.code)}`}
+                prefetch={false}
+                className="inline-block rounded border border-line px-3 py-1.5 text-sm hover:border-brand"
+              >
+                {locale === 'zh' ? f.name_zh : f.name_en}
+              </Link>
+            </li>
+          ))}
+        </ul>
       </section>
     </div>
   )
