@@ -34,7 +34,16 @@ async function Results({
 }) {
   const fields = await getFields()
   const params = parseExploreParams(await searchParams, fields.map((f) => f.code))
-  const { total, items } = await searchInstitutionsCached(params, locale)
+  const { total, items } = await searchInstitutionsCached(
+    params.q,
+    params.region,
+    params.field,
+    params.control,
+    params.maxTuition,
+    params.size,
+    params.page,
+    locale,
+  )
   return (
     <>
       <ExploreFilters params={params} fields={fields} locale={locale} dict={dict} />

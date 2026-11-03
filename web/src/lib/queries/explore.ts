@@ -13,7 +13,14 @@ export type ExploreItem = {
   region: string | null
   programCount: number
   matchedPrograms: { id: number; nameZh: string | null; nameEn: string | null }[]
-  tuition: { year: number; local: number | null; outOfState: number | null; currency: string } | null
+  tuition: {
+    year: number
+    local: number | null
+    outOfState: number | null
+    currency: string
+    source: { name: string; url: string }
+    fetchedAt: string
+  } | null
   studentSize: number | null
   source: { name: string; url: string }
   fetchedAt: string
@@ -35,6 +42,9 @@ type Row = {
   t_local: number | null
   t_oos: number | null
   t_currency: string | null
+  t_source_name: string | null
+  t_source_url: string | null
+  t_fetched_at: Date | string | null
   student_size: number | null
   source_name: string
   source_url: string
@@ -68,7 +78,7 @@ export async function searchInstitutions(
         ? sql`and exists (select 1 from program pf where pf.institution_id = i.id and pf.field_code = ${p.field})`
         : sql``
     }
-    ${p.maxTuition ? sql`and t.tuition is not null and t.tuition <= ${p.maxTuition}` : sql``}
+    ${p.maxTuition ? sql`and i.country_code = 'US' and t.tuition is not null and t.tuition <= ${p.maxTuition}` : sql``}
     ${
       p.size === 'small'
         ? sql`and st.student_size < 5000`
@@ -90,8 +100,12 @@ export async function searchInstitutions(
              coalesce(
                max(c.tuition) filter (where c.residency = 'out_of_state'),
                max(c.tuition) filter (where c.residency = 'local'))::float8 as tuition,
-             max(c.currency) as currency
+             max(c.currency) as currency,
+             (array_agg(cs.name order by (c.residency = 'out_of_state') desc))[1] as source_name,
+             (array_agg(c.source_url order by (c.residency = 'out_of_state') desc))[1] as source_url,
+             (array_agg(c.fetched_at order by (c.residency = 'out_of_state') desc))[1] as fetched_at
       from cost c
+      join source cs on cs.id = c.source_id
       where c.institution_id = i.id and c.residency in ('local', 'out_of_state')
         and c.year = (select max(c2.year) from cost c2
                       where c2.institution_id = i.id and c2.residency in ('local', 'out_of_state'))
@@ -118,6 +132,7 @@ export async function searchInstitutions(
                  : sql`null`
              } as matched,
              t.year as t_year, t.local as t_local, t.oos as t_oos, t.currency as t_currency,
+             t.source_name as t_source_name, t.source_url as t_source_url, t.fetched_at as t_fetched_at,
              st.student_size,
              s.name as source_name, s.url as source_url, i.fetched_at
       ${joins}
@@ -141,7 +156,14 @@ export async function searchInstitutions(
       tuition:
         r.t_year === null
           ? null
-          : { year: r.t_year, local: r.t_local, outOfState: r.t_oos, currency: r.t_currency ?? 'USD' },
+          : {
+              year: r.t_year,
+              local: r.t_local,
+              outOfState: r.t_oos,
+              currency: r.t_currency ?? 'USD',
+              source: { name: r.t_source_name ?? '', url: r.t_source_url ?? '' },
+              fetchedAt: new Date(r.t_fetched_at ?? r.fetched_at).toISOString(),
+            },
       studentSize: r.student_size,
       source: { name: r.source_name, url: r.source_url },
       fetchedAt: new Date(r.fetched_at).toISOString(),

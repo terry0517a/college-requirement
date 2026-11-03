@@ -33,6 +33,8 @@ test('tuition and size filters use the latest year', async () => {
   expect((await searchInstitutions({ ...base, size: 'medium' }, 'zh')).items.map((i) => i.id)).toEqual([10])
   const s = (await searchInstitutions({ ...base, region: 'us' }, 'zh')).items.find((i) => i.id === 10)!
   expect(s.tuition).toMatchObject({ year: 2024, outOfState: 68544, currency: 'USD' })
+  expect(s.tuition!.source.name).toBe('College Scorecard (U.S. Department of Education)')
+  expect(s.tuition!.fetchedAt).toBe('2026-10-30T03:00:00.000Z')
 })
 test('english locale keeps Chinese-only names', async () => {
   const r = await searchInstitutions({ ...base, q: '資訊工程' }, 'en')

@@ -22,11 +22,20 @@ export async function getSources() {
   return listSources()
 }
 
-// Args are the already-normalised (whitelisted, clamped) explore params, so the
-// cache key space stays bounded. Plain serializable object, no bigint.
-export async function searchInstitutionsCached(params: ExploreParams, locale: Locale) {
+// Primitive args only (the caller passes the already-normalised params), so the
+// cache key space stays bounded; ExploreParams is rebuilt inside.
+export async function searchInstitutionsCached(
+  q: string | null,
+  region: ExploreParams['region'],
+  field: string | null,
+  control: ExploreParams['control'],
+  maxTuition: number | null,
+  size: ExploreParams['size'],
+  page: number,
+  locale: Locale,
+) {
   'use cache'
   cacheLife('hours')
   cacheTag('institutions')
-  return searchInstitutions(params, locale)
+  return searchInstitutions({ q, region, field, control, maxTuition, size, page }, locale)
 }

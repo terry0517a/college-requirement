@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import type { Locale } from '@/i18n/config'
 import type { Dictionary } from '@/i18n/dictionaries'
-import { formatMoney } from '@/lib/format'
+import { formatDate, formatMoney } from '@/lib/format'
 import { displayName } from '@/lib/names'
 import type { ExploreItem } from '@/lib/queries/explore'
 import SourceNote from './SourceNote'
@@ -19,12 +19,20 @@ export default function InstitutionCard({
   const otherRaw = locale === 'zh' ? item.nameEn : item.nameZh
   const other = otherRaw && otherRaw !== main ? otherRaw : null
   const t = dict.explore
+  const tu = item.tuition
+  const tuitionValue = tu ? (tu.outOfState ?? tu.local) : null
   const tuition =
     item.country === 'US'
-      ? item.tuition && item.tuition.outOfState !== null
-        ? `${formatMoney(item.tuition.outOfState, item.tuition.currency, locale)}`
+      ? tuitionValue !== null && tu
+        ? formatMoney(tuitionValue, tu.currency, locale)
         : dict.common.noData
       : '—'
+  const labels = { source: dict.common.source, fetched: dict.common.fetchedAt }
+  const showTuitionSource =
+    item.country === 'US' &&
+    tu &&
+    tuitionValue !== null &&
+    (tu.source.name !== item.source.name || formatDate(tu.fetchedAt, locale) !== formatDate(item.fetchedAt, locale))
   const place = item.country === 'US' ? [item.city, item.region].filter(Boolean).join(', ') : ''
   return (
     <li className="rounded border border-line p-4">
@@ -47,10 +55,19 @@ export default function InstitutionCard({
         <dt className="text-subtle">{t.tuition}</dt>
         <dd>
           {tuition}
-          {item.country === 'US' && item.tuition && item.tuition.outOfState !== null && (
+          {item.country === 'US' && tu && tuitionValue !== null && (
             <span className="block text-xs text-subtle">
-              {t.tuitionUsEstimate.replace('{year}', String(item.tuition.year))}
+              {t.tuitionUsEstimate.replace('{year}', String(tu.year))}
             </span>
+          )}
+          {showTuitionSource && tu && (
+            <SourceNote
+              name={tu.source.name}
+              url={tu.source.url}
+              fetchedAt={tu.fetchedAt}
+              locale={locale}
+              labels={labels}
+            />
           )}
         </dd>
         {item.studentSize !== null && (
@@ -72,7 +89,7 @@ export default function InstitutionCard({
           url={item.source.url}
           fetchedAt={item.fetchedAt}
           locale={locale}
-          labels={{ source: dict.common.sourceLabel, fetched: dict.common.fetchDate }}
+          labels={labels}
         />
       </div>
     </li>
