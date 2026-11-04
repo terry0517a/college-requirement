@@ -7,6 +7,8 @@ from dataclasses import dataclass
 
 import pdfplumber
 
+from collegedata.parsers.cac_sieve import normalize_program_name
+
 KNOWN_SUBJECTS = {"國", "英", "公", "數甲", "物", "歷", "化", "生", "地",
                   "數B", "數乙", "社", "數A", "自", "術"}
 _TOKEN = re.compile(r"^(.+?)x([\d.]+)$")
@@ -45,7 +47,7 @@ def row_from_cells(cells: list[str]) -> UacRow:
     return UacRow(
         code=c[0] or "",
         school_zh=c[1] or "",
-        program_zh=c[2] or "",
+        program_zh=normalize_program_name(c[2] or "", None),
         subjects=parse_subjects(c[3] or ""),
         admitted_count=int(c[4] or 0),
         min_score=float(score) if score is not None else None,

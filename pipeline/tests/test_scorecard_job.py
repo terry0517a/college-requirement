@@ -217,3 +217,27 @@ def test_one_second_between_every_request_including_retry(db, httpx_mock, monkey
     n = len(httpx_mock.get_requests())
     assert n == 8  # (3 probes + 1 page) x 2 attempts
     assert sleeps == [(1, k) for k in range(1, n)]
+
+
+NOT_FOUND = {"errors": [{"error": "parameter_not_found", "input": "2026_admissions_admission_rate_overall",
+                         "message": "The input parameter '2026_admissions_admission_rate_overall' is not known in this dataset."}]}
+
+
+def test_probe_treats_parameter_not_found_as_no_data(db, httpx_mock):
+    for y in (2026, 2025):
+        httpx_mock.add_response(
+            url=re.compile(rf".*{y}\.admissions\.admission_rate\.overall__range=.*per_page=1.*"),
+            status_code=400, json=NOT_FOUND, is_reusable=True)
+    probe(httpx_mock, 2024, 3)
+    page(httpx_mock)
+    r = run_job(ScorecardJob(client=httpx.Client(), api_key="k1", today=TODAY), db)
+    assert r.status == "success" and r.rows_written == 3
+    assert {x[0] for x in db.execute("select distinct year from admission_stat")} == {2024, 2023, 2022}
+
+
+def test_probe_other_400_still_fails(db, httpx_mock):
+    httpx_mock.add_response(
+        url=re.compile(r".*2026\.admissions\.admission_rate\.overall__range=.*per_page=1.*"),
+        status_code=400, json={"errors": [{"error": "invalid_parameter"}]}, is_reusable=True)
+    r = run_job(ScorecardJob(client=httpx.Client(), api_key="k1", today=TODAY), db)
+    assert r.status == "failed" and "400" in r.error and "k1" not in r.error

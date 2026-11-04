@@ -22,10 +22,15 @@ def test_rls_enabled_on_every_table(db):
     assert rows == {t: True for t in rows}
 
 def test_anon_read_policies(db):
-    pol = {r[0]: r[1:] for r in db.execute("select tablename, policyname, cmd, roles from pg_policies where schemaname='public'")}
+    pol = {}
+    for r in db.execute("select tablename, policyname, cmd, roles from pg_policies where schemaname='public'"):
+        pol.setdefault(r[0], set()).add((r[1], r[2], tuple(r[3])))
     assert "fetch_log" not in pol
     for t in _public_tables(db) - {"fetch_log", "cac_fetch"}:
-        assert pol.get(t) == (f"{t}_anon_read", "SELECT", ["anon"]), t
+        assert pol.get(t) == {
+            (f"{t}_anon_read", "SELECT", ("anon",)),
+            (f"{t}_web_reader_read", "SELECT", ("web_reader",)),
+        }, t
 
 def test_openalex_id_unique(db):
     sid = db.execute("insert into source(code,name,url) values('s','s','u') returning id").fetchone()[0]
@@ -82,3 +87,43 @@ def test_cac_fetch_has_no_anon_policy(db):
 
 def test_cac_source_entry_loads(db):
     assert ensure_source(db, "cac") > 0
+
+
+def test_web_reader_can_read_data_tables(db):
+    db.execute("set local role web_reader")
+    for t in ("institution", "program", "admission_stat", "admission_requirement", "cost",
+              "strength", "field", "institution_stat", "source"):
+        db.execute(f"select count(*) from {t}")
+
+@pytest.mark.parametrize("table", ["fetch_log", "cac_fetch"])
+def test_web_reader_cannot_read_private_tables(db, table):
+    db.execute("set local role web_reader")
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        db.execute(f"select count(*) from {table}")
+
+def test_web_reader_cannot_write(db):
+    db.execute("set local role web_reader")
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        db.execute("insert into field(code,name_zh,name_en,sort) values ('x','x','x',99)")
+
+def test_web_reader_does_not_inherit_anon(db):
+    n = db.execute(
+        "select count(*) from pg_auth_members m join pg_roles r on r.oid = m.roleid"
+        " join pg_roles u on u.oid = m.member where r.rolname = 'anon' and u.rolname = 'web_reader'"
+    ).fetchone()[0]
+    assert n == 0
+
+
+def test_web_reader_is_not_privileged(db):
+    row = db.execute("select rolsuper, rolbypassrls from pg_roles where rolname='web_reader'").fetchone()
+    assert row == (False, False)
+
+
+def test_every_public_table_has_rls(db):
+    # web_reader gets explicit grants plus per-table RLS policies, so RLS is
+    # what keeps private tables private and all tables read-only on any platform.
+    rows = db.execute(
+        "select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace"
+        " where n.nspname = 'public' and c.relkind = 'r' and not c.relrowsecurity"
+    ).fetchall()
+    assert rows == []

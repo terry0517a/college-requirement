@@ -24,6 +24,34 @@
 7. 執行 `select count(*) from institution where country_code='US' and scorecard_id is null`，記下重複的 Hipo 列數量（計畫 3 會隱藏）。
 8. 若未來發現有「只提供遠距」的科系（Scorecard 旗標值 2），目前會被略過，屆時再決定。
 
+## 網站（Vercel）
+
+網站與管線共用同一個 Supabase 資料庫，但網站只讀資料、不寫入。以下步驟由儲存庫擁有者做一次。
+
+1. **Supabase：建立網站專用的讀取帳號。** 到 Supabase 專案，左側選單 SQL Editor → New query，貼上下面這行，把 `<自訂強密碼>` 換成自己想的強密碼（請記下來），按 Run：
+
+   ```sql
+   alter role web_reader with login password '<自訂強密碼>';
+   ```
+
+   `web_reader` 角色已由 migration 0006 建立，它不繼承 `anon`，只被明確授予讀取公開資料表的權限（每張表另有一條專屬的 RLS 讀取政策）；內部資料表 `fetch_log`、`cac_fetch` 則依賴 Row Level Security（資料列層級權限）保護，目前每張資料表都已啟用 RLS。
+
+   接著取得連線字串：到 Supabase 專案 → Settings → Database → Connection string，Method 選 **Transaction pooler**（port 6543）。使用者名稱格式為 `web_reader.<project-ref>`（`<project-ref>` 就是 Supabase 網址中的那一串英數字），把密碼換成上面設定的強密碼，得到的字串即為 `DATABASE_URL`。
+
+   若 pooler 拒絕這個自訂角色登入，可暫時改用 `postgres` 使用者的 Transaction pooler 連線字串，網站仍是只讀（程式不寫入），並在 GitHub Issue 記下原因，之後再修正。
+
+2. **Vercel：匯入專案並設定環境變數。** 到 [vercel.com](https://vercel.com) 用 GitHub 帳號登入 → 首頁按 Add New → Project → 在 Import Git Repository 找到 `college-requirement`，按 Import → Root Directory 按 Edit，選 `web` → 展開 Environment Variables，新增兩個變數：
+   - `DATABASE_URL`：步驟 1 得到的連線字串。
+   - `SITE_URL`：Vercel 給的網址，例如 `https://college-requirement.vercel.app`（結尾不要加 `/`）。
+
+   確認後按 Deploy。部署完成後，到專案 Settings → Domains 可看到實際網址；若與 `SITE_URL` 不同，回到 Settings → Environment Variables 修改 `SITE_URL`，再到 Deployments 頁重新部署一次。
+
+3. **Vercel：設定資料庫同區的執行區域。** 到 Vercel 專案 Settings → Functions → Region，選美國區域 Washington, D.C., USA（East）（代號 `iad1`），與建立 Supabase 專案時選的區域相同（例如 East US），網站每次查詢才會快。
+
+4. **首次部署前，必須已完成管線的初始載入**（見本文件上方第一節的第 5 步）。網站在建置時會讀取資料庫，若資料庫還是空的，頁面會沒有內容。
+
+5. **每週資料更新後，網站最慢一天內反映。** 網站頁面有快取，管線寫入新資料後不會立即顯示；多數頁面數小時內更新，最慢一天內反映。
+
 ## 排程
 
 | Job | cron | 說明 |

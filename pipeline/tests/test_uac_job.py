@@ -85,3 +85,18 @@ def test_rerun_keeps_program_name_en(db, httpx_mock):
     db.execute("update program set name_en = 'Chinese Literature' where name_zh = '中國文學系'")
     run_job(UacJob(client=httpx.Client(), years=[115], today=TODAY), db)
     assert db.execute("select name_en from program where name_zh = '中國文學系'").fetchone()[0] == "Chinese Literature"
+
+def test_control_and_field_code_written(db, httpx_mock):
+    httpx_mock.add_response(url="https://www2.uac.edu.tw/115data/115_result_school_data.pdf", content=PDF)
+    assert run_job(UacJob(client=httpx.Client(), years=[115]), db).status == "success"
+    ctl = dict(db.execute("select name_zh, control from institution where country_code='TW'").fetchall())
+    assert ctl["國立臺灣大學"] == "public"
+    assert set(ctl.values()) <= {"public", "private"}
+    assert db.execute("select count(*) from program where field_code is null").fetchone()[0] == 0
+
+def test_existing_institution_null_control_backfilled(db, httpx_mock):
+    _seed(db)
+    db.execute("update institution set control = null where domain = 'ntu.edu.tw'")
+    httpx_mock.add_response(url="https://www2.uac.edu.tw/115data/115_result_school_data.pdf", content=PDF)
+    assert run_job(UacJob(client=httpx.Client(), years=[115]), db).status == "success"
+    assert db.execute("select control from institution where domain='ntu.edu.tw'").fetchone()[0] == "public"

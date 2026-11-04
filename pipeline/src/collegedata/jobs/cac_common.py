@@ -9,6 +9,7 @@ from typing import Callable, Iterable
 from psycopg.types.json import Jsonb
 
 from collegedata.cac_http import BusyError
+from collegedata.fields import classify_tw_program
 
 BASE = "https://www.cac.edu.tw"
 DEFAULT_MAX_SCHOOLS = 10
@@ -103,13 +104,13 @@ def record_unit(conn, job, roc_year, school_code, url, status, rows_written, row
 
 def upsert_program(conn, inst_id: int, name_zh: str, source_id: int, source_url: str) -> int:
     return conn.execute(
-        """insert into program (institution_id, name_zh, name_en, source_id, source_url, fetched_at)
-           values (%s, %s, NULL, %s, %s, now())
+        """insert into program (institution_id, name_zh, name_en, field_code, source_id, source_url, fetched_at)
+           values (%s, %s, NULL, %s, %s, %s, now())
            on conflict (institution_id, name_zh) do update set
-               source_id = excluded.source_id,
+               field_code = excluded.field_code, source_id = excluded.source_id,
                source_url = excluded.source_url, fetched_at = excluded.fetched_at
            returning id""",
-        (inst_id, name_zh, source_id, source_url),
+        (inst_id, name_zh, classify_tw_program(name_zh), source_id, source_url),
     ).fetchone()[0]
 
 

@@ -30,3 +30,9 @@ def test_header_rows_skipped_and_pages_concatenated():
     rows = parse_uac_pdf(FIX)
     assert all(r.code.isdigit() for r in rows)
     assert any(r.code == "0040" for r in rows)   # 第 2 頁第一列
+
+
+def test_program_name_newlines_and_fullwidth_removed():
+    from collegedata.parsers.uac import row_from_cells
+    r = row_from_cells(["001", "國立臺灣大學", "園藝科技學系(園藝\n科技組）", "國x1.00", "10", "50.5", None])
+    assert r.program_zh == "園藝科技學系(園藝科技組)"

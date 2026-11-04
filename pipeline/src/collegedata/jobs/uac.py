@@ -8,6 +8,7 @@ import httpx
 import yaml
 from psycopg.types.json import Jsonb
 
+from collegedata.fields import tw_control
 from collegedata.jobs.cac_common import upsert_program
 from collegedata.parsers.uac import parse_uac_pdf
 from collegedata.sources import ensure_source
@@ -56,18 +57,19 @@ def _institution_id(conn, cache, school_zh, school_map, source_id, source_url) -
     if domain in cache:
         return cache[domain]
     row = conn.execute(
-        "select id, name_zh from institution where country_code = 'TW' and domain = %s", (domain,)
+        "select id, name_zh, control from institution where country_code = 'TW' and domain = %s", (domain,)
     ).fetchone()
     if row is None:
         inst_id = conn.execute(
-            """insert into institution (country_code, name_en, name_zh, domain, web_url, source_id, source_url, fetched_at)
-               values ('TW', %s, %s, %s, %s, %s, %s, now()) returning id""",
-            (name_en, school_zh, domain, f"https://www.{domain}/", source_id, source_url),
+            """insert into institution (country_code, name_en, name_zh, control, domain, web_url, source_id, source_url, fetched_at)
+               values ('TW', %s, %s, %s, %s, %s, %s, %s, now()) returning id""",
+            (name_en, school_zh, tw_control(school_zh), domain, f"https://www.{domain}/", source_id, source_url),
         ).fetchone()[0]
     else:
         inst_id = row[0]
-        if row[1] != school_zh:
-            conn.execute("update institution set name_zh = %s where id = %s", (school_zh, inst_id))
+        if row[1] != school_zh or row[2] is None:
+            conn.execute("update institution set name_zh = %s, control = coalesce(control, %s) where id = %s",
+                         (school_zh, tw_control(school_zh), inst_id))
     cache[domain] = inst_id
     return inst_id
 
