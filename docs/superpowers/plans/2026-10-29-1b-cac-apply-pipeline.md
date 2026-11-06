@@ -15,7 +15,7 @@
 ## Global Constraints
 
 - 每一筆資料都必須有 `source_id`、`source_url`、`fetched_at`；`source_url` 是可重現的來源網址（圖片網址或校系分則頁網址）。
-- 對 cac.edu.tw：User-Agent 固定 `collegedata-pipeline/0.1 (+https://github.com/terry0517a/college-requirement; cyw0517terry@gmail.com)`；兩個請求間隔 ≥ 3 秒；**禁止** `verify=False`；收到 HTTP 429／503 或內容含「流量過大」即停止發新請求。
+- 對 cac.edu.tw：User-Agent 固定 `collegedata-pipeline/0.1 (+https://github.com/terry0517a/college-requirement; tslw.team@gmail.com)`；兩個請求間隔 ≥ 3 秒；**禁止** `verify=False`；收到 HTTP 429／503 或內容含「流量過大」即停止發新請求。
 - 抓過且成功的 (job, 學年, 校碼) 永不重抓（`cac_fetch.status = 'done'`）。
 - 每次執行額度：環境變數 `CAC_MAX_SCHOOLS`（預設 10）、`CAC_TIME_BUDGET_MINUTES`（預設 75）。
 - 兩個 Job `row_count_guard = False`；「嘗試 ≥ 1 所且成功 0 所」→ 拋例外讓 job 失敗。

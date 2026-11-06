@@ -10,7 +10,7 @@ import httpx
 
 log = logging.getLogger(__name__)
 
-USER_AGENT = "collegedata-pipeline/0.1 (+https://github.com/terry0517a/college-requirement; cyw0517terry@gmail.com)"
+USER_AGENT = "collegedata-pipeline/0.1 (+https://github.com/terry0517a/college-requirement; tslw.team@gmail.com)"
 CERT_PATH = Path(__file__).resolve().parents[2] / "config" / "certs" / "twca_ssl_sub_ca.pem"
 BUSY_MARKER = "流量過大"
 BUSY_STATUSES = (429, 503)
