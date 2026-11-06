@@ -66,7 +66,7 @@
 
 ## 4. 抓取行為與節制（硬性規定）
 
-1. User-Agent 固定為 `collegedata-pipeline/0.1 (+https://github.com/terry0517a/college-requirement; cyw0517terry@gmail.com)`，不偽裝瀏覽器。
+1. User-Agent 固定為 `collegedata-pipeline/0.1 (+https://github.com/terry0517a/college-requirement; tslw.team@gmail.com)`，不偽裝瀏覽器。
 2. 對 cac.edu.tw 的任何兩個請求之間至少間隔 3 秒（含重試）。
 3. 每個學年每張圖、每個校系分則頁只抓一次：抓過且解析成功的，永不重抓（除非手動清除進度）。進度記在資料庫（第 5.3 節）。
 4. 每次執行有額度：環境變數 `CAC_MAX_SCHOOLS`（預設 10 所）與 `CAC_TIME_BUDGET_MINUTES`（預設 75 分鐘）；達到任一上限就正常結束，下次接續。手動執行可由 workflow 輸入加大額度。
