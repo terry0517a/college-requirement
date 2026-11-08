@@ -309,8 +309,8 @@ OCR_CONFUSIONS = {
     # the OCR model cannot read 戲 and drops it (prefix match)
     "name_repairs": {"劇學系": "戲劇學系"},
     # --- observed with the PP-OCRv5 model on the full 113 and 114 台大 (001) images ---
-    # header text only (never data cells): 會 read as 曾
-    "header_text": {"社曾": "社會"},
+    # header text only (never data cells): 會 read as 曾; 115 runner (002, 004-009, 011): 數學A's A read as 合
+    "header_text": {"社曾": "社會", "數學合": "數學A"},
     # the 【】 of the group marker above a table are read as ( ) or [ ]
     "marker_open": "【([（",
     "marker_close": "】)]）",
