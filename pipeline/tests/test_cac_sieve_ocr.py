@@ -254,6 +254,13 @@ def test_header_she_zeng_maps_to_social():
     assert m[3] == ("thresholds", "社會") and m[4] == ("multipliers", "社會")
 
 
+def test_header_math_a_read_as_he_maps_to_math_a():
+    # 115/002, 004-009, 011 (GitHub runner): the A of 數學A read as 合, cut-off 篩/選 glyphs prefix it
+    m = map_headers(["校系代碼", "校系名稱", "招生名額", "數學合", "定標數學B", "?數學合", "篩選倍數學B"])
+    assert m[3] == ("thresholds", "數學A") and m[5] == ("multipliers", "數學A")
+    assert m[4] == ("thresholds", "數學B") and m[6] == ("multipliers", "數學B")
+
+
 def test_she_zeng_not_rewritten_in_data_cells():
     assert cac_sieve.expand_subjects("社曾") == []
 
