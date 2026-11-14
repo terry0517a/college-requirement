@@ -3,6 +3,7 @@ import httpx
 from collegedata.countries import SUPPORTED
 from collegedata.sources import ensure_source
 
+# Hipo does not serve https (port 443 refuses connections, checked 2026-11-14).
 HIPO_URL = "http://universities.hipolabs.com/search"
 HIPO_COUNTRY_NAMES = {"TW": "Taiwan, Province of China", "US": "United States"}
 
@@ -19,6 +20,16 @@ where institution.source_id = excluded.source_id
 """
 
 
+def _safe_web_url(url: str | None) -> str | None:
+    # Hipo is only reachable over plain http, so its payload could be tampered with
+    # in transit. Keep only http(s) links; drop javascript:, data:, etc.
+    if not url:
+        return None
+    if url.strip().lower().startswith(("http://", "https://")):
+        return url
+    return None
+
+
 def upsert_institutions(conn, records: list[dict], source_id: int, source_url: str) -> int:
     count = 0
     for rec in records:
@@ -32,7 +43,7 @@ def upsert_institutions(conn, records: list[dict], source_id: int, source_url: s
                 rec["alpha_two_code"],
                 rec["name"],
                 domains[0],
-                web_pages[0] if web_pages else None,
+                _safe_web_url(web_pages[0]) if web_pages else None,
                 source_id,
                 source_url,
             ),
