@@ -30,3 +30,15 @@ def test_does_not_overwrite_rows_owned_by_other_sources(db):
     row = db.execute("select name_en, source_id, source_url from institution where domain='stanford.edu'").fetchone()
     assert row == ("Stanford University", sc, "http://x")
     assert db.execute("select source_url from institution where domain='ntu.edu.tw'").fetchone()[0] == "http://y"
+
+def test_drops_non_http_web_urls(db):
+    # Hipo has no https endpoint, so treat its payload as untrusted: only keep http(s) links.
+    sid = ensure_source(db, "hipo")
+    recs = [
+        {"alpha_two_code": "TW", "name": "Evil U", "domains": ["evil.edu.tw"], "web_pages": ["javascript:alert(1)"]},
+        {"alpha_two_code": "TW", "name": "Data U", "domains": ["data.edu.tw"], "web_pages": ["  DATA:text/html,x"]},
+        {"alpha_two_code": "TW", "name": "Good U", "domains": ["good.edu.tw"], "web_pages": ["HTTPS://good.edu.tw/"]},
+    ]
+    assert upsert_institutions(db, recs, sid, "http://x") == 3
+    rows = dict(db.execute("select domain, web_url from institution").fetchall())
+    assert rows == {"evil.edu.tw": None, "data.edu.tw": None, "good.edu.tw": "HTTPS://good.edu.tw/"}
